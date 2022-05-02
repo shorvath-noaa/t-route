@@ -76,6 +76,7 @@ output_parameters:
     lite_restart:
         #----------
         lite_restart_output_directory: restart/
+        lite_restart_output_time_interval:
     chrtout_output:
         #----------
         wrf_hydro_channel_output_source_folder: channel_forcing/
