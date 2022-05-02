@@ -183,6 +183,68 @@ def new_nwm_q0(run_results):
     )
 
 
+def create_lite_restart_time_index(run_sets, time_interval):
+    """
+    Create an index of datetimes from specified lite restart time intervals.
+    This will filter the larger dataframe that gets passed to create_lite_restart_df
+    function.
+    """
+    if len(run_sets) > 1:
+        run_sets_count = len(run_sets)
+        initial_timestamp = run_sets[0].get('t0')
+        final_timestamp = run_sets[run_sets_count - 1].get('final_timestamp')
+    
+    else:
+        initial_timestamp = run_sets[0].get('t0')
+        final_timestamp = run_sets[0].get('final_timestamp')
+    
+    return pd.date_range(initial_timestamp,
+                         final_timestamp,
+                         freq=str(time_interval) + 'S')
+    
+    
+def create_lite_restart_df(run_results, run_set, lite_restart_idx):
+    """
+    Prepare a q0 dataframe with flow and depth at specified time intervals.
+    """
+
+    time_steps = []
+    i = 0
+    ind = []
+    for number in range(run_results[0][1].shape[1]//3):
+        time_steps.append('_' + str(number))
+        ind.append([i,i,i+2])
+        i += 3
+    ind = [item for sublist in ind for item in sublist]
+    column_names = [x + str(y) for y in time_steps for x in ["qu0", "qd0", "h0"]]
+    df = pd.concat(
+        [
+            pd.DataFrame(
+                r[1][:,ind], index=r[0], columns=column_names
+            )
+            for r in run_results
+        ],
+        copy=False,
+    )
+    
+    t0 = run_set.get('t0')
+    dt = run_set.get('dt')
+    final_t = run_set.get('final_timestamp')
+    full_timesteps = pd.date_range(t0, final_t, freq=str(dt) + 'S', closed='right')
+    full_timesteps = np.repeat(full_timesteps,3)
+    
+    column_ind = full_timesteps.isin(lite_restart_idx)
+    df = df.iloc[:,column_ind]
+    
+    dfList = []
+    for i in range(0, df.shape[1], 3):
+        dfList.append(df.iloc[:, i:i+3])
+    
+    q0_dict = dict(zip(full_timesteps[column_ind].unique(), dfList))
+    
+    return q0_dict
+
+
 def get_waterbody_water_elevation(waterbodies_df, q0):
     """
     Update the starting water_elevation of each lake/reservoir
@@ -448,6 +510,13 @@ def main_v03(argv):
         forcing_end_time = time.time()
         task_times['forcing_time'] += forcing_end_time - ic_end_time
 
+    # Create a time index of restart files based on user input
+    if output_parameters["lite_restart"].get('lite_restart_output_time_interval'):
+        lite_restart_idx = create_lite_restart_time_index(
+            run_sets,
+            output_parameters["lite_restart"].get("lite_restart_output_time_interval")
+        )
+    
     # Pass empty subnetwork list to nwm_route. These objects will be calculated/populated
     # on first iteration of for loop only. For additional loops this will be passed
     # to function from inital loop. 
@@ -519,12 +588,26 @@ def main_v03(argv):
         
         # TODO move the conditional call to write_lite_restart to nwm_output_generator.
         if "lite_restart" in output_parameters:
-            nhd_io.write_lite_restart(
+            if output_parameters["lite_restart"].get('lite_restart_output_time_interval'):
+                
+                q0_multiple_timesteps = create_lite_restart_df(run_results, run, lite_restart_idx)
+                
+                nhd_io.write_lite_restart(
                 q0, 
                 waterbodies_df, 
                 t0 + timedelta(seconds = dt * nts), 
-                output_parameters['lite_restart']
+                output_parameters['lite_restart'],
+                q0_multiple_timesteps
             )
+                
+            else:
+                
+                nhd_io.write_lite_restart(
+                    q0, 
+                    waterbodies_df, 
+                    t0 + timedelta(seconds = dt * nts), 
+                    output_parameters['lite_restart']
+                )
         
         if run_set_iterator < len(run_sets) - 1:
             (
