@@ -140,20 +140,21 @@ class bmi_reservoir(Bmi):
         self._values['LkMxE'] = np.zeros(1)
         self._values['waterbody_id'] = np.zeros(1)
         self._values['ifd'] = np.zeros(1)
-        self._values['upstream_ids'] = np.zeros(1, dtype=int)
+        self._values['upstream_ids'] = np.zeros(0, dtype=int)
         self._values['reservoir_type'] = np.zeros(1)
-        self._values['lake_water~incoming__volume_flow_rate'] = np.zeros(12)
+        self._values['lake_water~incoming__volume_flow_rate'] = np.zeros(0)
         self._values['lake_water~outgoing__volume_flow_rate'] = np.zeros(1)
 
 
         #TODO: how will we know the size of these arrays?
-        self._values['gage_observations'] = np.zeros(120)
-        self._values['gage_time'] = np.zeros(120)
+        self._values['gage_observations'] = np.zeros(0)
+        self._values['gage_time'] = np.zeros(0)
 
         self._values['da_idx'] = np.zeros(1, dtype=int)
         self._values['time_step'] = np.zeros(1)
         self._values['rfc_forecast_persist_seconds'] = np.zeros(1)
         self._values['synthetic_flag'] = np.zeros(289)
+        self._values['rfc_file'] = np.zeros(1, dtype=str)
         
         #RFC DA        
         self._values['rfc_timeseries_offset_hours'] = np.zeros(1)
@@ -344,10 +345,10 @@ class bmi_reservoir(Bmi):
         src : array_like
             Array of new values.
         """
-        val = self.get_value_ptr(var_name)
-        val[:] = src.reshape(val.shape)
+        #val = self.get_value_ptr(var_name)
+        #val[:] = src.reshape(val.shape)
         
-        #self._values[var_name] = src
+        self._values[var_name] = src
 
     def set_value_at_indices(self, name, inds, src):
         """Set model values at particular indices.

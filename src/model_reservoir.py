@@ -31,8 +31,8 @@ class reservoir_model():
              rfc_parameters) = _read_config_file(bmi_cfg_file)
             
             if compute_parameters:
-                self._time_step = compute_parameters.get("model_time_step", 300)
-                self._t0 = compute_parameters.get("model_start_time", None)
+                self._time_step = compute_parameters.get("dt", 300)
+                self._t0 = compute_parameters.get("start_datetime", None)
                 if not self._t0:
                     raise(RuntimeError("No start_datetime provided in config file."))
             if rfc_parameters:
@@ -85,6 +85,14 @@ class reservoir_model():
             self._persistence_update_time = 0
         
         if self._res_type==4 or self._res_type==5:
+            self._use_RFC = True
+            self._timeseries_discharges = values['gage_observations']
+            self._timeseries_idx = values['da_idx']
+            self._update_time = 0
+            self._da_time_step = values['time_step']
+            self._total_counts = len(self._timeseries_discharges)
+            self._rfc_timeseries_file = values['rfc_file']
+            '''
             (self._use_RFC, 
              self._timeseries_discharges, 
              self._timeseries_idx, 
@@ -97,6 +105,7 @@ class reservoir_model():
                                      self._rfc_timeseries_folder,
                                      lake_number,
                                      self._time_step)
+             '''
 
     def run(self, values: dict,):
         """
