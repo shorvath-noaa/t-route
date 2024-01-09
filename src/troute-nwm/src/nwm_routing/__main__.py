@@ -10,6 +10,7 @@ import concurrent.futures
 from troute.NHDNetwork import NHDNetwork
 from troute.HYFeaturesNetwork import HYFeaturesNetwork
 from troute.DataAssimilation import DataAssimilation
+from troute.Forcing import Forcing
 
 import numpy as np
 import pandas as pd
@@ -104,8 +105,11 @@ def main_v04(argv):
         network_end_time = time.time()
         task_times['network_creation_time'] = network_end_time - network_start_time
 
+    # Initialize forcing module:
+    forcing = Forcing(forcing_parameters, supernetwork_parameters)
+    
     # Create run_sets: sets of forcing files for each loop
-    run_sets = network.build_forcing_sets()
+    run_sets = forcing.build_forcing_sets()
 
     # Create da_sets: sets of TimeSlice files for each loop
     if "data_assimilation_parameters" in compute_parameters:
