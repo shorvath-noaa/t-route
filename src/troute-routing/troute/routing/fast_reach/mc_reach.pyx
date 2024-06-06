@@ -486,168 +486,179 @@ cpdef object compute_network_structured(
 
             if r.type == compute_type.RESERVOIR_LP: 
                 
-                # water elevation before levelpool calculation
-                initial_water_elevation = r.reach.lp.water_elevation
-                
-                # levelpool reservoir storage/outflow calculation
-                run_lp_c(r, upstream_flows, 0.0, routing_period, &reservoir_outflow, &reservoir_water_elevation)
-                
-                # USGS reservoir hybrid DA inputs
-                if r.reach.lp.wbody_type_code == 2:
-                    # find index location of waterbody in reservoir_usgs_obs 
-                    # and reservoir_usgs_time
-                    res_idx = np.where(usgs_idx == r.reach.lp.lake_number)
-                    wbody_gage_obs          = reservoir_usgs_obs[res_idx[0][0],:]
-                    wbody_gage_time         = reservoir_usgs_time
-                    prev_persisted_outflow  = usgs_prev_persisted_ouflow[res_idx[0][0]]
-                    persistence_update_time = usgs_persistence_update_time[res_idx[0][0]] 
-                    persistence_index       = usgs_prev_persistence_index[res_idx[0][0]]
-                    update_time             = usgs_update_time[res_idx[0][0]] 
-                
-                # USACE reservoir hybrid DA inputs
-                if r.reach.lp.wbody_type_code == 3:
-                    # find index location of waterbody in reservoir_usgs_obs 
-                    # and reservoir_usgs_time
-                    res_idx = np.where(usace_idx == r.reach.lp.lake_number)
-                    wbody_gage_obs          = reservoir_usace_obs[res_idx[0][0],:]
-                    wbody_gage_time         = reservoir_usace_time
-                    prev_persisted_outflow  = usace_prev_persisted_ouflow[res_idx[0][0]]
-                    persistence_update_time = usace_persistence_update_time[res_idx[0][0]] 
-                    persistence_index       = usace_prev_persistence_index[res_idx[0][0]]
-                    update_time             = usace_update_time[res_idx[0][0]] 
-                    
-                # Execute reservoir DA - both USGS(2) and USACE(3) types
-                if r.reach.lp.wbody_type_code == 2 or r.reach.lp.wbody_type_code == 3:
-                    
-                    #print('***********************************************************')
-                    #print('calling reservoir DA code for lake_id:', r.reach.lp.lake_number) 
-                    #print('before DA, simulated outflow = ', reservoir_outflow)
-                    #print('before DA, simulated water elevation = ', r.reach.lp.water_elevation)
-                    
-                    (new_outflow,
-                     new_persisted_outflow,
-                     new_water_elevation, 
-                     new_update_time, 
-                     new_persistence_index, 
-                     new_persistence_update_time
-                    ) = reservoir_hybrid_da(
-                        r.reach.lp.lake_number,       # lake identification number
-                        wbody_gage_obs,               # gage observation values (cms)
-                        wbody_gage_time,              # gage observation times (sec)
-                        dt * timestep,                # model time (sec)
-                        prev_persisted_outflow,       # previously persisted outflow (cms)
-                        persistence_update_time,
-                        persistence_index,            # number of sequentially persisted update cycles
-                        reservoir_outflow,            # levelpool simulated outflow (cms)
-                        upstream_flows,               # waterbody inflow (cms)
-                        dt,                           # model timestep (sec)
-                        r.reach.lp.area,              # waterbody surface area (km2)
-                        r.reach.lp.max_depth,         # max waterbody depth (m)
-                        r.reach.lp.orifice_elevation, # orifice elevation (m)
-                        initial_water_elevation,      # water surface el., previous timestep (m)
-                        48.0,                         # gage lookback hours (hrs)
-                        update_time                   # waterbody update time (sec)
-                    )
-                    
-                    #print('After DA, outflow = ', new_outflow)
-                    #print('After DA, water elevation =', new_water_elevation)
-                    
-                    # update levelpool water elevation state
-                    update_lp_c(r, new_water_elevation, &reservoir_water_elevation)
-                    
-                    # change reservoir_outflow
-                    reservoir_outflow = new_outflow
-                    
-                    #print('confirming DA elevation replacement:', reservoir_water_elevation)
-                    #print('===========================================================')
-                    
-                # update USGS DA reservoir state arrays
-                if r.reach.lp.wbody_type_code == 2:
-                    usgs_update_time[res_idx[0][0]]              = new_update_time
-                    usgs_prev_persisted_ouflow[res_idx[0][0]]    = new_persisted_outflow
-                    usgs_prev_persistence_index[res_idx[0][0]]   = new_persistence_index
-                    usgs_persistence_update_time[res_idx[0][0]]  = new_persistence_update_time
-                    
-                # update USACE DA reservoir state arrays
-                if r.reach.lp.wbody_type_code == 3:
-                    usace_update_time[res_idx[0][0]]             = new_update_time
-                    usace_prev_persisted_ouflow[res_idx[0][0]]   = new_persisted_outflow
-                    usace_prev_persistence_index[res_idx[0][0]]  = new_persistence_index
-                    usace_persistence_update_time[res_idx[0][0]] = new_persistence_update_time
+                # Great Lake waterbody: doesn't actually route anything, default outflows
+                # are from climatology.
+                if r.reach.lp.wbody_type_code == 6:
+                    # if DA.exists():
+                        # Perform data assimilation
 
-
-                # RFC reservoir hybrid DA inputs
-                if r.reach.lp.wbody_type_code == 4:
-                    # find index location of waterbody in reservoir_rfc_obs 
-                    # and reservoir_rfc_time
-                    res_idx            = np.where(rfc_idx == r.reach.lp.lake_number)
-                    wbody_gage_obs     = reservoir_rfc_obs[res_idx[0][0],:]
-                    totalCounts        = reservoir_rfc_totalCounts[res_idx[0][0]]
-                    rfc_file           = reservoir_rfc_file[res_idx[0][0]]
-                    use_RFC            = reservoir_rfc_use_forecast[res_idx[0][0]]
-                    current_timeseries_idx = rfc_timeseries_idx[res_idx[0][0]]
-                    update_time        = rfc_update_time[res_idx[0][0]]
-                    rfc_timestep       = reservoir_rfc_da_timestep[res_idx[0][0]]
-                    rfc_persist_days   = reservoir_rfc_persist_days[res_idx[0][0]]
-
-                # Execute RFC reservoir DA - both RFC(4) and Glacially Dammed Lake(5) types
-                if r.reach.lp.wbody_type_code == 4 or r.reach.lp.wbody_type_code == 5:
+                    # else: 
+                        # use climatology
+                    pass
+                
+                else:
+                    # water elevation before levelpool calculation
+                    initial_water_elevation = r.reach.lp.water_elevation
                     
-                    #print('***********************************************************')
-                    #print('calling reservoir DA code for lake_id:', r.reach.lp.lake_number) 
-                    #print('before DA, simulated outflow = ', reservoir_outflow)
-                    #print('before DA, simulated water elevation = ', r.reach.lp.water_elevation)
+                    # levelpool reservoir storage/outflow calculation
+                    run_lp_c(r, upstream_flows, 0.0, routing_period, &reservoir_outflow, &reservoir_water_elevation)
                     
-                    (
-                        new_outflow, 
+                    # USGS reservoir hybrid DA inputs
+                    if r.reach.lp.wbody_type_code == 2:
+                        # find index location of waterbody in reservoir_usgs_obs 
+                        # and reservoir_usgs_time
+                        res_idx = np.where(usgs_idx == r.reach.lp.lake_number)
+                        wbody_gage_obs          = reservoir_usgs_obs[res_idx[0][0],:]
+                        wbody_gage_time         = reservoir_usgs_time
+                        prev_persisted_outflow  = usgs_prev_persisted_ouflow[res_idx[0][0]]
+                        persistence_update_time = usgs_persistence_update_time[res_idx[0][0]] 
+                        persistence_index       = usgs_prev_persistence_index[res_idx[0][0]]
+                        update_time             = usgs_update_time[res_idx[0][0]] 
+                    
+                    # USACE reservoir hybrid DA inputs
+                    if r.reach.lp.wbody_type_code == 3:
+                        # find index location of waterbody in reservoir_usgs_obs 
+                        # and reservoir_usgs_time
+                        res_idx = np.where(usace_idx == r.reach.lp.lake_number)
+                        wbody_gage_obs          = reservoir_usace_obs[res_idx[0][0],:]
+                        wbody_gage_time         = reservoir_usace_time
+                        prev_persisted_outflow  = usace_prev_persisted_ouflow[res_idx[0][0]]
+                        persistence_update_time = usace_persistence_update_time[res_idx[0][0]] 
+                        persistence_index       = usace_prev_persistence_index[res_idx[0][0]]
+                        update_time             = usace_update_time[res_idx[0][0]] 
+                        
+                    # Execute reservoir DA - both USGS(2) and USACE(3) types
+                    if r.reach.lp.wbody_type_code == 2 or r.reach.lp.wbody_type_code == 3:
+                        
+                        #print('***********************************************************')
+                        #print('calling reservoir DA code for lake_id:', r.reach.lp.lake_number) 
+                        #print('before DA, simulated outflow = ', reservoir_outflow)
+                        #print('before DA, simulated water elevation = ', r.reach.lp.water_elevation)
+                        
+                        (new_outflow,
+                        new_persisted_outflow,
                         new_water_elevation, 
-                        new_update_time,
-                        new_timeseries_idx,
-                        dynamic_reservoir_type, 
-                        assimilated_value, 
-                        assimilated_source_file,
-                    ) = reservoir_RFC_da(
-                        use_RFC,                            # boolean whether to use RFC values or not
-                        wbody_gage_obs,              # gage observation values (cms)
-                        current_timeseries_idx,                     # index of for current time series observation
-                        totalCounts,                       # total number of observations in RFC timeseries
-                        routing_period,                          # routing period (sec)
-                        dt * timestep,                               # model time (sec)
-                        update_time,                        # time to advance to next time series index
-                        rfc_timestep,                       # frequency of DA observations (sec)
-                        rfc_persist_days*24*60*60, # max seconds RFC forecasts will be used/persisted (days -> seconds)
-                        r.reach.lp.wbody_type_code,                           # reservoir type
-                        upstream_flows,                                   # waterbody inflow (cms)
-                        initial_water_elevation,                  # water surface el., previous timestep (m)
-                        reservoir_outflow,                  # levelpool simulated outflow (cms)
-                        reservoir_water_elevation,                # levelpool simulated water elevation (m)
-                        r.reach.lp.area*1.0e6,          # waterbody surface area (km2 -> m2)
-                        r.reach.lp.max_depth,                # max waterbody depth (m)
-                        rfc_file,                # RFC file name
-                    )
+                        new_update_time, 
+                        new_persistence_index, 
+                        new_persistence_update_time
+                        ) = reservoir_hybrid_da(
+                            r.reach.lp.lake_number,       # lake identification number
+                            wbody_gage_obs,               # gage observation values (cms)
+                            wbody_gage_time,              # gage observation times (sec)
+                            dt * timestep,                # model time (sec)
+                            prev_persisted_outflow,       # previously persisted outflow (cms)
+                            persistence_update_time,
+                            persistence_index,            # number of sequentially persisted update cycles
+                            reservoir_outflow,            # levelpool simulated outflow (cms)
+                            upstream_flows,               # waterbody inflow (cms)
+                            dt,                           # model timestep (sec)
+                            r.reach.lp.area,              # waterbody surface area (km2)
+                            r.reach.lp.max_depth,         # max waterbody depth (m)
+                            r.reach.lp.orifice_elevation, # orifice elevation (m)
+                            initial_water_elevation,      # water surface el., previous timestep (m)
+                            48.0,                         # gage lookback hours (hrs)
+                            update_time                   # waterbody update time (sec)
+                        )
+                        
+                        #print('After DA, outflow = ', new_outflow)
+                        #print('After DA, water elevation =', new_water_elevation)
+                        
+                        # update levelpool water elevation state
+                        update_lp_c(r, new_water_elevation, &reservoir_water_elevation)
+                        
+                        # change reservoir_outflow
+                        reservoir_outflow = new_outflow
+                        
+                        #print('confirming DA elevation replacement:', reservoir_water_elevation)
+                        #print('===========================================================')
+                        
+                    # update USGS DA reservoir state arrays
+                    if r.reach.lp.wbody_type_code == 2:
+                        usgs_update_time[res_idx[0][0]]              = new_update_time
+                        usgs_prev_persisted_ouflow[res_idx[0][0]]    = new_persisted_outflow
+                        usgs_prev_persistence_index[res_idx[0][0]]   = new_persistence_index
+                        usgs_persistence_update_time[res_idx[0][0]]  = new_persistence_update_time
+                        
+                    # update USACE DA reservoir state arrays
+                    if r.reach.lp.wbody_type_code == 3:
+                        usace_update_time[res_idx[0][0]]             = new_update_time
+                        usace_prev_persisted_ouflow[res_idx[0][0]]   = new_persisted_outflow
+                        usace_prev_persistence_index[res_idx[0][0]]  = new_persistence_index
+                        usace_persistence_update_time[res_idx[0][0]] = new_persistence_update_time
 
-                    #print('After DA, outflow = ', new_outflow)
-                    #print('After DA, water elevation =', new_water_elevation)
+
+                    # RFC reservoir hybrid DA inputs
+                    if r.reach.lp.wbody_type_code == 4:
+                        # find index location of waterbody in reservoir_rfc_obs 
+                        # and reservoir_rfc_time
+                        res_idx            = np.where(rfc_idx == r.reach.lp.lake_number)
+                        wbody_gage_obs     = reservoir_rfc_obs[res_idx[0][0],:]
+                        totalCounts        = reservoir_rfc_totalCounts[res_idx[0][0]]
+                        rfc_file           = reservoir_rfc_file[res_idx[0][0]]
+                        use_RFC            = reservoir_rfc_use_forecast[res_idx[0][0]]
+                        current_timeseries_idx = rfc_timeseries_idx[res_idx[0][0]]
+                        update_time        = rfc_update_time[res_idx[0][0]]
+                        rfc_timestep       = reservoir_rfc_da_timestep[res_idx[0][0]]
+                        rfc_persist_days   = reservoir_rfc_persist_days[res_idx[0][0]]
+
+                    # Execute RFC reservoir DA - both RFC(4) and Glacially Dammed Lake(5) types
+                    if r.reach.lp.wbody_type_code == 4 or r.reach.lp.wbody_type_code == 5:
+                        
+                        #print('***********************************************************')
+                        #print('calling reservoir DA code for lake_id:', r.reach.lp.lake_number) 
+                        #print('before DA, simulated outflow = ', reservoir_outflow)
+                        #print('before DA, simulated water elevation = ', r.reach.lp.water_elevation)
+                        
+                        (
+                            new_outflow, 
+                            new_water_elevation, 
+                            new_update_time,
+                            new_timeseries_idx,
+                            dynamic_reservoir_type, 
+                            assimilated_value, 
+                            assimilated_source_file,
+                        ) = reservoir_RFC_da(
+                            use_RFC,                            # boolean whether to use RFC values or not
+                            wbody_gage_obs,              # gage observation values (cms)
+                            current_timeseries_idx,                     # index of for current time series observation
+                            totalCounts,                       # total number of observations in RFC timeseries
+                            routing_period,                          # routing period (sec)
+                            dt * timestep,                               # model time (sec)
+                            update_time,                        # time to advance to next time series index
+                            rfc_timestep,                       # frequency of DA observations (sec)
+                            rfc_persist_days*24*60*60, # max seconds RFC forecasts will be used/persisted (days -> seconds)
+                            r.reach.lp.wbody_type_code,                           # reservoir type
+                            upstream_flows,                                   # waterbody inflow (cms)
+                            initial_water_elevation,                  # water surface el., previous timestep (m)
+                            reservoir_outflow,                  # levelpool simulated outflow (cms)
+                            reservoir_water_elevation,                # levelpool simulated water elevation (m)
+                            r.reach.lp.area*1.0e6,          # waterbody surface area (km2 -> m2)
+                            r.reach.lp.max_depth,                # max waterbody depth (m)
+                            rfc_file,                # RFC file name
+                        )
+
+                        #print('After DA, outflow = ', new_outflow)
+                        #print('After DA, water elevation =', new_water_elevation)
+                        
+                        # update levelpool water elevation state
+                        update_lp_c(r, new_water_elevation, &reservoir_water_elevation)
+                        
+                        # change reservoir_outflow
+                        reservoir_outflow = new_outflow
+                        
+                        #print('confirming DA elevation replacement:', reservoir_water_elevation)
+                        #print('===========================================================')
+                        
+                        # update RFC DA reservoir state arrays
+                        rfc_update_time[res_idx[0][0]]    = new_update_time
+                        rfc_timeseries_idx[res_idx[0][0]] = new_timeseries_idx
+                        
                     
-                    # update levelpool water elevation state
-                    update_lp_c(r, new_water_elevation, &reservoir_water_elevation)
-                    
-                    # change reservoir_outflow
-                    reservoir_outflow = new_outflow
-                    
-                    #print('confirming DA elevation replacement:', reservoir_water_elevation)
-                    #print('===========================================================')
-                    
-                    # update RFC DA reservoir state arrays
-                    rfc_update_time[res_idx[0][0]]    = new_update_time
-                    rfc_timeseries_idx[res_idx[0][0]] = new_timeseries_idx
-                    
-                
-                # populate flowveldepth array with levelpool or hybrid DA results 
-                flowveldepth[r.id, timestep, 0] = reservoir_outflow
-                flowveldepth[r.id, timestep, 1] = 0.0
-                flowveldepth[r.id, timestep, 2] = reservoir_water_elevation
-                upstream_array[r.id, timestep, 0] = upstream_flows
+                    # populate flowveldepth array with levelpool or hybrid DA results 
+                    flowveldepth[r.id, timestep, 0] = reservoir_outflow
+                    flowveldepth[r.id, timestep, 1] = 0.0
+                    flowveldepth[r.id, timestep, 2] = reservoir_water_elevation
+                    upstream_array[r.id, timestep, 0] = upstream_flows
 
             elif r.type == compute_type.RESERVOIR_RFC:
                 run_rfc_c(r, upstream_flows, 0.0, routing_period, &reservoir_outflow, &reservoir_water_elevation)
