@@ -215,7 +215,7 @@ class HYFeaturesNetwork(AbstractNetwork):
     """
     
     """
-    __slots__ = ["_upstream_terminal", "_nexus_latlon", "_duplicate_ids_df"]
+    __slots__ = ["_upstream_terminal", "_nexus_latlon", "_duplicate_ids_df", "_gl_climatology_df"]
 
     def __init__(self, 
                  supernetwork_parameters, 
@@ -529,6 +529,9 @@ class HYFeaturesNetwork(AbstractNetwork):
                         gl_wbody_df
                     ]
                 )
+                
+                self._gl_climatology_df = get_great_lakes_climatology()
+                
             else:
                 gl_dict = {}
             
