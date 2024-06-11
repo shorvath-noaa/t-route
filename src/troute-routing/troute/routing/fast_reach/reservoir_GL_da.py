@@ -1,16 +1,18 @@
 import numpy as np
 import logging
+from datetime import datetime, timedelta
 LOG = logging.getLogger('')
 
 def reservoir_hybrid_da(
     lake_number,
     gage_obs,
     gage_time,
+    t0,
     now,
     previous_persisted_outflow,
     persistence_update_time,
     persistence_index,
-    climatology_outflow,
+    climatology_outflows,
     obs_lookback_hours,
     update_time,
     update_time_interval = 3600,
@@ -30,6 +32,7 @@ def reservoir_hybrid_da(
     - gage_time               (memoryview slice): array of observation times
                                                   (secs) relative to the model
                                                   initialization time (t0).
+    - t0                                   (str): Initialization time (t0).
     - now                                (float): Current time, seconds since in-
                                                   itialization time (t0).
     - previous_persisted_outflow (numpy.float32): Persisted outflow value from 
@@ -57,6 +60,11 @@ def reservoir_hybrid_da(
     # new_persistence_update_time as persistence_update_time. 
     new_persistence_index = persistence_index
     new_persistence_update_time = persistence_update_time
+    
+    # determine which climatology value to use based on model time
+    now_datetime = datetime.strptime(t0, '%Y-%m-%d_%H:%M:%S') + timedelta(seconds=now)
+    month_idx = now_datetime.month - 1 # subtract 1 for python indexing
+    climatology_outflow = climatology_outflows[month_idx]
     
     # initialize new_update_time as update time. If the update time needs to be
     # updated, then this variable will be reset later.
