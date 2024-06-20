@@ -727,27 +727,35 @@ class great_lake(AbstractDA):
             lake_ontario_df = self._lake_ontario_df
             canada_df = self._canada_df
             
-            ids_to_check = {'4800002': '04127885', '4800004': '13196034'}
             # the segment corresponding to 04127885 gages isn't exist as of now. Should be replaced in future
             # Initialize an empty DataFrame with the same columns as the usgs DataFrame
-            if self._usgs_df.empty:
+            if self.usgs_df.empty:
                 self._usgs_df = _create_usgs_df(data_assimilation_parameters, streamflow_da_parameters, run_parameters, network, da_run)
             
-            usgs_df_GL = pd.DataFrame(columns=self._usgs_df.columns)
-
-            # Check if any ids are present in the index
-            for key, value in ids_to_check.items():
-                if value in self._usgs_df.index:
-                    temp_df = (self._usgs_df.loc[[value]]
-                            .transpose()
-                            .resample('15min')
-                            .asfreq()
-                            .transpose())
-                    temp_df.index = [key]
-                else:
-                    temp_df = pd.DataFrame(index=[key], columns=self._usgs_df.columns)
+            usgs_df_GL = (
+                self.usgs_df[self.usgs_df.index.isin([4800002, 4800004])]
+                .transpose()
+                .resample('15min')
+                .asfreq()
+                .transpose()
+                )
+            
+            # usgs_df_GL = pd.DataFrame(columns=self._usgs_df.columns)
+            
+            # # Check if any ids are present in the index
+            # ids_to_check = {'4800002': '04127885', '4800004': '13196034'}
+            # for key, value in ids_to_check.items():
+            #     if value in self._usgs_df.index:
+            #         temp_df = (self._usgs_df.loc[[value]]
+            #                 .transpose()
+            #                 .resample('15min')
+            #                 .asfreq()
+            #                 .transpose())
+            #         temp_df.index = [key]
+            #     else:
+            #         temp_df = pd.DataFrame(index=[key], columns=self._usgs_df.columns)
                 
-                usgs_df_GL = pd.concat([usgs_df_GL, temp_df], axis=0)   
+            #     usgs_df_GL = pd.concat([usgs_df_GL, temp_df], axis=0)   
             
             if not lake_ontario_df.empty:
                 lake_ontario_df = lake_ontario_df.T.reset_index().drop('index', axis = 1)
