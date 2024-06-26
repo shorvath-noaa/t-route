@@ -216,7 +216,8 @@ class HYFeaturesNetwork(AbstractNetwork):
     """
     
     """
-    __slots__ = ["_upstream_terminal", "_nexus_latlon", "_duplicate_ids_df", "_gl_climatology_df"]
+    __slots__ = ["_upstream_terminal", "_nexus_latlon", "_duplicate_ids_df", 
+                 "_gl_climatology_df", "_canadian_gage_link_df"]
 
     def __init__(self, 
                  supernetwork_parameters, 
@@ -337,6 +338,10 @@ class HYFeaturesNetwork(AbstractNetwork):
     @property
     def waterbody_null(self):
         return np.nan #pd.NA
+    
+    @property
+    def canadian_gage_df(self):
+        return self._canadian_gage_link_df
     
     def preprocess_network(self, flowpaths, nexus):
         self._dataframe = flowpaths
@@ -595,9 +600,6 @@ class HYFeaturesNetwork(AbstractNetwork):
                 .set_index(idx_id)[['value']].rename(columns={'value': 'gages'})
                 .rename_axis(None, axis=0).to_dict()
             )
-            
-            #FIXME: temporary solution, add gage-crosswalk for Great Lakes:
-            self._gages['gages'].update({4800002: '04127885', 4800004: '04159130'})
             
             # Find furthest downstream gage and create our lake_gage_df to make crosswalk dataframes.
             lake_gage_hydroseq_df = gages_df[~gages_df['lake_id'].isnull()][['lake_id', 'value', 'hydroseq']].rename(columns={'value': 'gages'})
