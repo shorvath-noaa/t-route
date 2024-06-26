@@ -209,7 +209,7 @@ class NudgingDA(AbstractDA):
                     self._last_obs_df = _reindex_link_to_lake_id(self._last_obs_df, network.link_lake_crosswalk)
                 
                 self._usgs_df = _create_usgs_df(data_assimilation_parameters, streamflow_da_parameters, run_parameters, network, da_run)
-                if 'canada_timeslice_files' in da_run:
+                if ('canada_timeslice_files' in da_run) & (not network.canadian_gage_df.empty):
                     self._canada_df = _create_canada_df(data_assimilation_parameters, streamflow_da_parameters, run_parameters, network, da_run)
                     self._canada_is_created = True                    
 
@@ -1013,6 +1013,14 @@ class DataAssimilation(NudgingDA, PersistenceDA, RFCDA):
     @property
     def reservoir_rfc_param_df(self):
         return self._reservoir_rfc_param_df
+    
+    @property
+    def great_lakes_df(self):
+        return self._great_lakes_df
+    
+    @property
+    def great_lakes_param_df(self):
+        return self._great_lakes_param_df
 
 
 # --------------------------------------------------------------
