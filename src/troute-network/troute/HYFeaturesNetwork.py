@@ -538,6 +538,9 @@ class HYFeaturesNetwork(AbstractNetwork):
                 
                 self._gl_climatology_df = get_great_lakes_climatology()
                 
+                
+                self._gl_climatology_df = get_great_lakes_climatology()
+                
             else:
                 gl_dict = {}
             
@@ -593,6 +596,9 @@ class HYFeaturesNetwork(AbstractNetwork):
                 .set_index(idx_id)[['value']].rename(columns={'value': 'gages'})
                 .rename_axis(None, axis=0).to_dict()
             )
+            
+            #FIXME: temporary solution, add gage-crosswalk for Great Lakes:
+            self._gages['gages'].update({4800002: '04127885', 4800004: '04159130'})
             
             # Find furthest downstream gage and create our lake_gage_df to make crosswalk dataframes.
             lake_gage_hydroseq_df = gages_df[~gages_df['lake_id'].isnull()][['lake_id', 'value', 'hydroseq']].rename(columns={'value': 'gages'})

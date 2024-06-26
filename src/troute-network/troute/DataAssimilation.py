@@ -745,6 +745,7 @@ class great_lake(AbstractDA):
             # the segment corresponding to 04127885 gages isn't exist as of now. Should be replaced in future
             # Initialize an empty DataFrame with the same columns as the usgs DataFrame
             if self.usgs_df.empty:
+            if self.usgs_df.empty:
                 self._usgs_df = _create_usgs_df(data_assimilation_parameters, streamflow_da_parameters, run_parameters, network, da_run)
             
             usgs_df_GL = (
@@ -783,6 +784,7 @@ class great_lake(AbstractDA):
             #     else:
             #         temp_df = pd.DataFrame(index=[key], columns=self._usgs_df.columns)
                 
+            #     usgs_df_GL = pd.concat([usgs_df_GL, temp_df], axis=0)   
             #     usgs_df_GL = pd.concat([usgs_df_GL, temp_df], axis=0)   
             
             if not lake_ontario_df.empty:
