@@ -601,6 +601,10 @@ class HYFeaturesNetwork(AbstractNetwork):
                 .rename_axis(None, axis=0).to_dict()
             )
             
+            #FIXME: temporary solution, add canadian gage crosswalk dataframe. This should come from
+            # the hydrofabric.
+            self._canadian_gage_link_df = pd.DataFrame(columns=['gages','link']).set_index('link')
+            
             # Find furthest downstream gage and create our lake_gage_df to make crosswalk dataframes.
             lake_gage_hydroseq_df = gages_df[~gages_df['lake_id'].isnull()][['lake_id', 'value', 'hydroseq']].rename(columns={'value': 'gages'})
             lake_gage_hydroseq_df['lake_id'] = lake_gage_hydroseq_df['lake_id'].astype(int)
