@@ -714,7 +714,7 @@ class great_lake(AbstractDA):
         greatLake = False
         data_assimilation_parameters = self._data_assimilation_parameters
         run_parameters = self._run_parameters
-        reservoir_persistence_da = data_assimilation_parameters.get('reservoir_da', {}).get('reservoir_persistence_da', {})
+        reservoir_persistence_da = data_assimilation_parameters.get('reservoir_da', None).get('reservoir_persistence_da', None)
 
         GL_crosswalk_df = pd.DataFrame(
             {
@@ -727,8 +727,16 @@ class great_lake(AbstractDA):
             greatLake = reservoir_persistence_da.get('reservoir_persistence_greatLake', False)
 
         if greatLake:
-
-            streamflow_da_parameters = data_assimilation_parameters.get('streamflow_da', {})
+            self._great_lakes_df, self._great_lakes_param_df = _create_GL_dfs(
+                GL_crosswalk_df,
+                data_assimilation_parameters,
+                run_parameters,
+                da_run,
+                network.t0
+            )
+            
+            '''
+            streamflow_da_parameters = data_assimilation_parameters.get('streamflow_da', None)
             
             if not self._canada_is_created and ('canada_timeslice_files' in da_run):
                 self._canada_df = _create_canada_df(data_assimilation_parameters, streamflow_da_parameters, run_parameters, network, da_run)
@@ -744,6 +752,7 @@ class great_lake(AbstractDA):
             
             # the segment corresponding to 04127885 gages isn't exist as of now. Should be replaced in future
             # Initialize an empty DataFrame with the same columns as the usgs DataFrame
+            if self.usgs_df.empty:
             if self.usgs_df.empty:
                 self._usgs_df = _create_usgs_df(data_assimilation_parameters, streamflow_da_parameters, run_parameters, network, da_run)
             
@@ -784,6 +793,7 @@ class great_lake(AbstractDA):
             #         temp_df = pd.DataFrame(index=[key], columns=self._usgs_df.columns)
                 
             #     usgs_df_GL = pd.concat([usgs_df_GL, temp_df], axis=0)   
+            #     usgs_df_GL = pd.concat([usgs_df_GL, temp_df], axis=0)   
             
             if not lake_ontario_df.empty:
                 lake_ontario_df = lake_ontario_df.T.reset_index().drop('index', axis = 1)
@@ -799,6 +809,7 @@ class great_lake(AbstractDA):
             dfs = [lake_ontario_df, canada_df, usgs_df_GL]
             
             self.great_lake_all = pd.concat(dfs, axis=0, join='outer', ignore_index=False)
+            '''
         LOG.debug("great_lake class is completed in %s seconds." % (time.time() - great_lake_start_time))
 
 class RFCDA(AbstractDA):
@@ -1118,10 +1129,8 @@ def _create_usgs_df(data_assimilation_parameters, streamflow_da_parameters, run_
     LOG.debug("Reading and preprocessing usgs timeslice files is completed in %s seconds." % (time.time() - usgs_df_start_time))
     return usgs_df
 
-def _create_LakeOntario_df(run_parameters, network, da_run):
-    LOG.info("Creating Lake Ontario dataframe is started.")
-    LakeOntario_df_start_time = time.time()    
-    t0 = network.t0
+def _create_LakeOntario_df(run_parameters, t0, da_run):
+    '''
     nts = run_parameters.get('nts')
     dt = run_parameters.get('dt')
     end_time = pd.to_datetime(t0) + pd.Timedelta(hours = nts/(3600/dt))
@@ -1170,8 +1179,8 @@ def _create_LakeOntario_df(run_parameters, network, da_run):
     filtered_df = lake_ontario_df.loc[(lake_ontario_df.index >= t0) & (lake_ontario_df.index < end_time)]
     total_df = pd.merge(time_total_df, filtered_df, left_index=True, right_index=True, how='left')
     total_df = total_df.rename(columns={'Outflow(m3/s)_y': 'Outflow(m3/s)'}).drop(columns='Outflow(m3/s)_x')
-    LOG.debug("Creating Lake Ontario dataframe is completed in %s seconds." % (time.time() - LakeOntario_df_start_time))
-    return total_df
+    '''
+    return lake_ontario_df.reset_index() #total_df
 
 def _create_canada_df(data_assimilation_parameters, streamflow_da_parameters, run_parameters, network, da_run):
     '''
