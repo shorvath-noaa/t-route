@@ -1,28 +1,20 @@
 import numpy as np
 import logging
-<<<<<<< HEAD
 from datetime import datetime, timedelta
-=======
->>>>>>> initial reservoir_GL_DA function
 LOG = logging.getLogger('')
 
-def reservoir_hybrid_da(
+def great_lakes_da(
     lake_number,
+    gage_idx,
     gage_obs,
     gage_time,
-<<<<<<< HEAD
+    lake_idx,
     t0,
-=======
->>>>>>> initial reservoir_GL_DA function
     now,
     previous_persisted_outflow,
     persistence_update_time,
     persistence_index,
-<<<<<<< HEAD
     climatology_outflows,
-=======
-    climatology_outflow,
->>>>>>> initial reservoir_GL_DA function
     obs_lookback_hours,
     update_time,
     update_time_interval = 3600,
@@ -42,10 +34,7 @@ def reservoir_hybrid_da(
     - gage_time               (memoryview slice): array of observation times
                                                   (secs) relative to the model
                                                   initialization time (t0).
-<<<<<<< HEAD
     - t0                                   (str): Initialization time (t0).
-=======
->>>>>>> initial reservoir_GL_DA function
     - now                                (float): Current time, seconds since in-
                                                   itialization time (t0).
     - previous_persisted_outflow (numpy.float32): Persisted outflow value from 
@@ -74,14 +63,11 @@ def reservoir_hybrid_da(
     new_persistence_index = persistence_index
     new_persistence_update_time = persistence_update_time
     
-<<<<<<< HEAD
     # determine which climatology value to use based on model time
     now_datetime = datetime.strptime(t0, '%Y-%m-%d_%H:%M:%S') + timedelta(seconds=now)
     month_idx = now_datetime.month - 1 # subtract 1 for python indexing
     climatology_outflow = climatology_outflows[month_idx]
     
-=======
->>>>>>> initial reservoir_GL_DA function
     # initialize new_update_time as update time. If the update time needs to be
     # updated, then this variable will be reset later.
     new_update_time = update_time
