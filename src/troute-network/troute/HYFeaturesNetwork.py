@@ -217,7 +217,7 @@ class HYFeaturesNetwork(AbstractNetwork):
     
     """
     __slots__ = ["_upstream_terminal", "_nexus_latlon", "_duplicate_ids_df", 
-                 "_gl_climatology_df", "_canadian_gage_link_df"]
+                 "_canadian_gage_link_df"]
 
     def __init__(self, 
                  supernetwork_parameters, 
@@ -540,6 +540,7 @@ class HYFeaturesNetwork(AbstractNetwork):
                 
             else:
                 gl_dict = {}
+                self._gl_climatology_df = pd.DataFrame()
             
             self._waterbody_types_df = pd.DataFrame(
                 data = 1, 
@@ -565,6 +566,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             self._waterbody_type_specified = False
             self._link_lake_crosswalk = None
             self._duplicate_ids_df = pd.DataFrame()
+            self._gl_climatology_df = pd.DataFrame()
 
         self._dataframe = self.dataframe.drop('waterbody', axis=1).drop_duplicates()
 
