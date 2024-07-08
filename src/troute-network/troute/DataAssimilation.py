@@ -732,7 +732,8 @@ class great_lake(AbstractDA):
                 data_assimilation_parameters,
                 run_parameters,
                 da_run,
-                network.t0
+                network.t0,
+                network.great_lakes_climatology_df,
             )
             
             '''
@@ -2038,7 +2039,8 @@ def _read_lastobs_file(
     LOG.debug(f"Reading last observation file is completed in %s seconds." % (time.time() - read_lastobs_start_time))
     return lastobs_df
 
-def _create_GL_dfs(GL_crosswalk_df, data_assimilation_parameters, run_parameters, da_run, t0):
+def _create_GL_dfs(GL_crosswalk_df, data_assimilation_parameters, run_parameters, 
+                   da_run, t0, great_lakes_climatology_df):
         
     # USGS gages:
     usgs_timeslices_folder = data_assimilation_parameters.get("usgs_timeslices_folder", None)
