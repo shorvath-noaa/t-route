@@ -19,6 +19,7 @@ from troute.network.reservoirs.levelpool.levelpool cimport MC_Levelpool, run_lp_
 from troute.network.reservoirs.rfc.rfc cimport MC_RFC, run_rfc_c
 from troute.routing.fast_reach.reservoir_hybrid_da import reservoir_hybrid_da
 from troute.routing.fast_reach.reservoir_RFC_da import reservoir_RFC_da
+from troute.routing.fast_reach.reservoir_GL_da import great_lakes_da
 from cython.parallel import prange
 
 #import cProfile
@@ -207,6 +208,10 @@ cpdef object compute_network_structured(
     const float[:] reservoir_rfc_update_time,
     const int[:] reservoir_rfc_da_timestep,
     const int[:] reservoir_rfc_persist_days,
+    const int[:] great_lake_idx,
+    const str[:] great_lakes_datetimes,
+    const float[:] great_lakes_discharge,
+    const int[:] great_lakes_param_idx,
     dict upstream_results={},
     bint assume_short_ts=False,
     bint return_courant=False,
@@ -489,12 +494,36 @@ cpdef object compute_network_structured(
                 # Great Lake waterbody: doesn't actually route anything, default outflows
                 # are from climatology.
                 if r.reach.lp.wbody_type_code == 6:
-                    # if DA.exists():
-                        # Perform data assimilation
 
-                    # else: 
-                        # use climatology
-                    pass
+                    res_idx = np.where(usgs_idx == r.reach.lp.lake_number)
+                    wbody_gage_obs          = reservoir_usgs_obs[res_idx[0][0],:]
+                    wbody_gage_time         = reservoir_usgs_time
+                    prev_persisted_outflow  = usgs_prev_persisted_ouflow[res_idx[0][0]]
+                    persistence_update_time = usgs_persistence_update_time[res_idx[0][0]] 
+                    persistence_index       = usgs_prev_persistence_index[res_idx[0][0]]
+                    update_time             = usgs_update_time[res_idx[0][0]] 
+
+                    (new_outflow,
+                    new_persisted_outflow,
+                    new_water_elevation, 
+                    new_update_time, 
+                    new_persistence_index, 
+                    new_persistence_update_time
+                    ) = reservoir_hybrid_da(
+                        r.reach.lp.lake_number,
+                        great_lake_idx,
+                        great_lakes_discharge,
+                        great_lakes_datetimes,
+                        great_lakes_param_idx,
+                        t0,
+                        dt * timestep,
+                        0,
+                        '0',
+                        1,
+                        climatology_outflows,
+                        obs_lookback_hours,
+                        update_time,
+                    )
                 
                 else:
                     # water elevation before levelpool calculation
