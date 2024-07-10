@@ -2101,9 +2101,10 @@ def _create_GL_dfs(GL_crosswalk_df, data_assimilation_parameters, run_parameters
         [usgs_GL_df, canadian_GL_df, lake_ontario_df]
         ).rename(columns={'link': 'lake_id'}).sort_values(by=['lake_id','Datetime'])
     
-    great_lakes_param_df = pd.DataFrame(great_lakes_df.lake_id.unique(), columns=['lake_id'])
-    great_lakes_param_df['lastobs'] = np.nan
-    great_lakes_param_df['lastobs_time'] = np.nan
+    great_lakes_param_df = pd.DataFrame(great_lakes_df.lake_id.unique().sort(), columns=['lake_id']).sort_values('lake_id')
+    great_lakes_param_df['previous_assimilated_outflows'] = np.nan
+    great_lakes_param_df['previous_assimilated_timestamps'] = 'None'
+    great_lakes_param_df['update_times'] = t0.strftime('%Y-%m-%d_%H:%M:%S')
     
     return great_lakes_df, great_lakes_param_df
 
