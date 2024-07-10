@@ -292,6 +292,7 @@ def compute_nhd_routing_v02(
     reservoir_rfc_param_df,
     great_lakes_df,
     great_lakes_param_df,
+    great_lakes_climatology_df,
     da_parameter_dict,
     assume_short_ts,
     return_courant,
@@ -614,7 +615,10 @@ def compute_nhd_routing_v02(
                             great_lakes_df.Datetime.values.astype("str"),
                             great_lakes_df.Discharge.values.astype("float32"),
                             great_lakes_param_df.lake_id.values.astype("int32"),
-                            
+                            great_lakes_param_df.previous_assimilated_outflows.values.astype("float32"),
+                            great_lakes_param_df.previous_assimilated_timestamps.values.astype("str"),
+                            great_lakes_param_df.update_times.values.astype("str"),
+                            great_lakes_climatology_df.values,
                             {
                                 us: fvd
                                 for us, fvd in flowveldepth_interorder.items()
