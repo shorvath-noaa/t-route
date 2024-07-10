@@ -4,21 +4,16 @@ from datetime import datetime, timedelta
 LOG = logging.getLogger('')
 
 def great_lakes_da(
-    lake_number,
-    gage_idx,
     gage_obs,
     gage_time,
-    lake_idx,
+    previous_assimilated_outflow,
+    previous_assimilated_timestamp,
+    update_time,
     t0,
     now,
-    previous_persisted_outflow,
-    persistence_update_time,
-    persistence_index,
     climatology_outflows,
-    obs_lookback_hours,
-    update_time,
     update_time_interval = 3600,
-    persistence_update_time_interval = 86400,
+    persistence_limit = 11,
 ):
 
     """
@@ -53,151 +48,100 @@ def great_lakes_da(
     - outflow             (float): Persisted reservoir outflow rate (m3/sec)
     """
 
-    LOG.debug('Great Lakes data assimilation for lake_id: %s at time %s from run start' % (lake_number, now))
+    # LOG.debug('Great Lakes data assimilation for lake_id: %s at time %s from run start' % (lake_number, now))
     
-    # set persistence limit at persistence_update_time cycles
-    persistence_limit = 11
-    
-    # initialize new_persistence_index as persistence_index and 
-    # new_persistence_update_time as persistence_update_time. 
-    new_persistence_index = persistence_index
-    new_persistence_update_time = persistence_update_time
+    # Determine if a new observation should be searched for. Set to False as defaut:
+    update = False
+
+    # set new values as old values to start:
+    new_assimilated_outflow = previous_assimilated_outflow
+    new_assimilated_timestamp = previous_assimilated_timestamp
+    new_update_time = update_time
     
     # determine which climatology value to use based on model time
     now_datetime = datetime.strptime(t0, '%Y-%m-%d_%H:%M:%S') + timedelta(seconds=now)
     month_idx = now_datetime.month - 1 # subtract 1 for python indexing
     climatology_outflow = climatology_outflows[month_idx]
     
-    # initialize new_update_time as update time. If the update time needs to be
-    # updated, then this variable will be reset later.
-    new_update_time = update_time
+    if np.isnan(previous_assimilated_outflow):
+        previous_assimilated_outflow = climatology_outflow
     
-    if now >= update_time:
-        LOG.debug(
-            'Looking for observation to assimilate...'
-        )
-    
+    update_time = datetime.strptime(update_time, '%Y-%m-%d_%H:%M:%S')
+
+    if now_datetime >= update_time:
+        update = True
+            
+    if update:
+        # LOG.debug(
+        #     'Looking for observation to assimilate...'
+        # )
+        
         # initialize variable to store assimilated observations. We initialize
         # as np.nan, so that if no good quality observations are found, we can
         # easily catch it.
         obs = np.nan
         
-        # identify TimeSlice time (gage_time) index nearest to, but not greater 
-        # than the update_time
-        t_diff = update_time - gage_time
-        t_idx = np.where(t_diff >=  0, t_diff, np.inf).argmin()
-        
-        # look backwards from the nearest update_time for the first available 
-        # observation,
-        # NOTE: QA/QC has already happened upstream upon loading and formatting 
-        # TimeSlice observations, so all poor values have already been replaced 
-        # with nans
-        for i in range(t_idx, -1, -1):
+        #gage_time_sub = gage_time[gage_idx==lake_number]
+        gage_time = np.array(
+            [datetime.strptime(date, '%Y-%m-%d_%H:%M:%S') for date in gage_time]
+        )
+        # gage_obs_sub = gage_obs[gage_idx==lake_number]
+    
+        # identify location of gage_time that is nearest to, but not greater 
+        # than the update time
+        t_idxs = np.nonzero(((now_datetime - gage_time) >= timedelta()))[0]
+        if len(t_idxs)>0:
+            t_idx = t_idxs[-1]
             
-            # check if gage observation is good quality (not nan)
-            if np.isnan(gage_obs[i]) == False:
-                
-                # record good observation to obs
-                obs = gage_obs[i]
-                
-                # determine how many seconds prior to the update_time the 
-                # observation was taken
-                t_obs = gage_time[i]
-                gage_lookback_seconds = update_time - t_obs
-                
-                # reset the observation update time
-                new_update_time = update_time + update_time_interval
-                
-                break
-                
-        if np.isnan(obs): # no good observation was found
-        
+            # record good observation to obs
+            obs = gage_obs[t_idx]
+            
+            # determine how many seconds prior to the update_time the 
+            # observation was taken
+            t_obs = gage_time[t_idx]
+            gage_lookback_seconds = (now_datetime - t_obs).total_seconds()
+            
+        if np.isnan(obs):
             '''
             - If no good observation is found, then we do not update the 
-              update time. Consequently we will continue to search for a good
-              observation at each model timestep, before updating the update
-              time. 
+                update time. Consequently we will continue to search for a good
+                observation at each model timestep, before updating the update
+                time. 
 
             '''
-            LOG.debug(
-                'No good observation found, persisting previously assimilated flow'
-            )
-            persisted_outflow = previous_persisted_outflow
+            # LOG.debug(
+            #     'No good observation found, persisting previously assimilated flow'
+            # )
             
-            if now >= persistence_update_time:
-                new_persistence_index = persistence_index + 1
-                new_persistence_update_time = persistence_update_time \
-                    + persistence_update_time_interval
+            outflow = previous_assimilated_outflow
 
-        
-        else: # good observation found    
-        
-            # check that observation is not taken from beyond the
-            # allowable lookback window
-            if gage_lookback_seconds > obs_lookback_hours*60*60:
-                LOG.debug('good observation found, but is outside of lookback window')
-                LOG.debug(
-                    'observation at %s seconds from update time', 
-                    gage_lookback_seconds
-                )
-                persisted_outflow = previous_persisted_outflow
-                if now >= persistence_update_time:
-                    new_persistence_index = persistence_index + 1
-                    new_persistence_update_time = persistence_update_time \
-                        + persistence_update_time_interval
-                
-            else:
-                LOG.debug('good observation found!: %s cms', obs)
-                LOG.debug(
-                    'observation at %s seconds from update time', 
-                    gage_lookback_seconds
-                )
-                # the new persisted outflow is the discovered gage observation
-                persisted_outflow = obs
-                # reset persistence index and update persistence update time
-                new_persistence_index = 1
-                new_persistence_update_time = persistence_update_time \
-                    + persistence_update_time_interval
-    
-    elif now >= persistence_update_time:
-     
-        # increment the persistence index
-        new_persistence_index = persistence_index + 1
-        new_persistence_update_time = persistence_update_time \
-            + persistence_update_time_interval
-            
-        # persist previously persisted outflow value
-        if persistence_index <= persistence_limit:
-            LOG.debug(
-                'Persisting previously assimilated outflow'
-            )
-            persisted_outflow = previous_persisted_outflow
-            
-        # persistence limit reached - use levelpool outflow
-        if persistence_index > persistence_limit:
-            LOG.debug(
-                'Persistence limit reached, defaulting to climatological outflow'
-            )
-            persisted_outflow = climatology_outflow
-            new_persistence_index = 0
-        
-    else:
-        LOG.debug(
-            'Persisting previously assimilated outflow'
-        )
-        persisted_outflow = previous_persisted_outflow
-    
-    # set reservoir outflow
-    if np.isnan(persisted_outflow):
-        LOG.debug(
-            'Previously persisted outflow is nan, defaulting to climatological outflow'
-        )
-        # levelpool outflow
-        outflow = climatology_outflow
-        new_persistence_index = 0
+        elif gage_lookback_seconds > (persistence_limit*60*60*24):
+            '''
+            If a good observation was found, but the time difference between
+            the current model time and the observation timestamp is greater than
+            the persistence limit, default to climatology.
+            '''
+            outflow = climatology_outflow
+
+        else:
+            '''
+            A good observation is found and it is within the persistence limit.
+            '''  
+            outflow = obs
+            new_assimilated_outflow = obs
+            new_assimilated_timestamp = t_obs.strftime('%Y-%m-%d_%H:%M:%S')
+            new_update_time = (update_time + timedelta(seconds=update_time_interval)).strftime('%Y-%m-%d_%H:%M:%S')
     
     else:
-        # data assimilated outflow
-        outflow = persisted_outflow
-
-    return outflow, persisted_outflow, new_update_time, new_persistence_index, new_persistence_update_time
+        outflow = previous_assimilated_outflow
+        
+        previous_assimilated_timestamp = datetime.strptime(previous_assimilated_timestamp, '%Y-%m-%d_%H:%M:%S')
+        if (now_datetime - previous_assimilated_timestamp).total_seconds() > (persistence_limit*60*60*24):
+            '''
+            If the time difference between the current model time and the 
+            observation timestamp is greater than
+            the persistence limit, default to climatology.
+            '''
+            outflow = climatology_outflow
+    
+    return outflow, new_assimilated_outflow, new_assimilated_timestamp, new_update_time
