@@ -534,7 +534,7 @@ class HYFeaturesNetwork(AbstractNetwork):
                         self.waterbody_dataframe,
                         gl_wbody_df
                     ]
-                )
+                ).sort_index()
                 
                 self._gl_climatology_df = get_great_lakes_climatology()
                 
