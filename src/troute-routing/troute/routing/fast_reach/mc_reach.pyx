@@ -208,10 +208,14 @@ cpdef object compute_network_structured(
     const float[:] reservoir_rfc_update_time,
     const int[:] reservoir_rfc_da_timestep,
     const int[:] reservoir_rfc_persist_days,
-    const int[:] great_lake_idx,
+    const int[:] great_lakes_idx,
     const str[:] great_lakes_datetimes,
     const float[:] great_lakes_discharge,
     const int[:] great_lakes_param_idx,
+    const float[:] great_lakes_param_prev_assim_flow,
+    const str[:] great_lakes_param_prev_assim_timestamp,
+    const str[:] great_lakes_param_update_time,
+    const float[:,:] great_lakes_climatology,
     dict upstream_results={},
     bint assume_short_ts=False,
     bint return_courant=False,
@@ -430,6 +434,12 @@ cpdef object compute_network_structured(
     cdef np.ndarray[float, ndim=1] usace_prev_persistence_index = np.asarray(reservoir_usace_persistence_index)
     cdef np.ndarray[int, ndim=1] rfc_timeseries_idx             = np.asarray(reservoir_rfc_timeseries_idx)
 
+    # great lakes arrays
+    cdef np.ndarray[int, ndim=1] gl_idx = np.asarray(great_lakes_idx)
+    cdef np.ndarray[str, ndim=1] gl_update_time = np.asarray(great_lakes_param_update_time)
+    cdef np.ndarray[float, ndim=1] gl_prev_assim_ouflow = np.asarray(great_lakes_param_prev_assim_flow)
+    cdef np.ndarray[str, ndim=1] gl_prev_assim_timestamp = np.asarray(great_lakes_param_prev_assim_timestamp)  
+
     #---------------------------------------------------------------------------------------------
     #---------------------------------------------------------------------------------------------
     
@@ -494,36 +504,42 @@ cpdef object compute_network_structured(
                 # Great Lake waterbody: doesn't actually route anything, default outflows
                 # are from climatology.
                 if r.reach.lp.wbody_type_code == 6:
-
-                    res_idx = np.where(usgs_idx == r.reach.lp.lake_number)
-                    wbody_gage_obs          = reservoir_usgs_obs[res_idx[0][0],:]
-                    wbody_gage_time         = reservoir_usgs_time
-                    prev_persisted_outflow  = usgs_prev_persisted_ouflow[res_idx[0][0]]
-                    persistence_update_time = usgs_persistence_update_time[res_idx[0][0]] 
-                    persistence_index       = usgs_prev_persistence_index[res_idx[0][0]]
-                    update_time             = usgs_update_time[res_idx[0][0]] 
-
+                    # find index location of waterbody in great_lakes_df 
+                    # and great_lakes_param_df
+                    res_idx                    = np.where(gl_idx == r.reach.lp.lake_number)
+                    wbody_gage_obs             = great_lakes_discharge[res_idx[0]]
+                    wbody_gage_time            = great_lakes_datetimes[res_idx[0]]
+                    res_param_idx              = np.where(great_lakes_param_idx == r.reach.lp.lake_number)
+                    param_prev_assim_flow      = gl_prev_assim_ouflow[res_param_idx[0][0]]
+                    param_prev_assim_timestamp = gl_prev_assim_timestamp[res_param_idx[0][0]]
+                    param_update_time          = gl_update_time[res_param_idx[0][0]]
+                    climatology                = great_lakes_climatology[res_param_idx[0][0],:]
+                    
                     (new_outflow,
-                    new_persisted_outflow,
-                    new_water_elevation, 
-                    new_update_time, 
-                    new_persistence_index, 
-                    new_persistence_update_time
-                    ) = reservoir_hybrid_da(
-                        r.reach.lp.lake_number,
-                        great_lake_idx,
-                        great_lakes_discharge,
-                        great_lakes_datetimes,
-                        great_lakes_param_idx,
-                        t0,
-                        dt * timestep,
-                        0,
-                        '0',
-                        1,
-                        climatology_outflows,
-                        obs_lookback_hours,
-                        update_time,
+                    new_assimilated_outflow, 
+                    new_assimilated_timestamp, 
+                    new_update_time
+                    ) = great_lakes_da(
+                        wbody_gage_obs,             # gage observations (cms)
+                        wbody_gage_time,            # timestamps of gage observations (datetime str)
+                        param_prev_assim_flow,      # last used observation (cms)
+                        param_prev_assim_timestamp, # timestamp of last used observation (datetime str)
+                        param_update_time,          # timestamp to determine whether to look for new observation (datetime str)
+                        t0,                         # model initilaization time (datetime str)
+                        dt * timestep,              # model time (sec)
+                        climatology,                # climatology outflows (cms)
                     )
+
+                    gl_update_time[res_param_idx[0][0]] = new_update_time
+                    gl_prev_assim_ouflow[res_param_idx[0][0]] = new_assimilated_outflow
+                    gl_prev_assim_timestamp[res_param_idx[0][0]] = new_assimilated_timestamp
+                    
+                    # populate flowveldepth array with levelpool or hybrid DA results 
+                    flowveldepth[r.id, timestep, 0] = new_outflow
+                    flowveldepth[r.id, timestep, 1] = 0.0
+                    flowveldepth[r.id, timestep, 2] = 0.0
+                    upstream_array[r.id, timestep, 0] = upstream_flows
+                        
                 
                 else:
                     # water elevation before levelpool calculation
@@ -815,5 +831,11 @@ cpdef object compute_network_structured(
             rfc_idx, rfc_update_time-((timestep-1)*dt), 
             rfc_timeseries_idx
         ),
-        np.asarray(nudge)
+        np.asarray(nudge),
+        (
+            gl_idx,
+            gl_update_time,
+            gl_prev_assim_ouflow,
+            gl_prev_assim_timestamp
+        )
     )
