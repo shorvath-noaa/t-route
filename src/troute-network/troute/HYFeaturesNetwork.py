@@ -21,9 +21,9 @@ from .rfc_lake_gage_crosswalk import get_rfc_lake_gage_crosswalk, get_great_lake
 __verbose__ = False
 __showtiming__ = False
 
-def read_geopkg(file_path, compute_parameters, waterbody_parameters, cpu_pool):
+def read_geopkg(file_path, compute_parameters, waterbody_parameters, output_parameters, cpu_pool):
     # Establish which layers we will read. We'll always need the flowpath tables
-    layers = ['flowpaths','flowpath_attributes']
+    layers = ['flowpaths','flowpath-attributes']
 
     # If waterbodies are being simulated, read lakes table
     if waterbody_parameters.get('break_network_at_waterbodies',False):
@@ -45,6 +45,12 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, cpu_pool):
     if hybrid_routing & ('nexus' not in layers):
         layers.append('nexus')
     
+    # If nexus points or POIs are specified in output mask, read nexus table
+    if output_parameters.get('stream_output'):
+        mask_keys = output_parameters.get('stream_output',{}).get('mask',{}).keys()
+        if ('nex' in mask_keys) or ('poi' in mask_keys) & ('nexus' not in layers):
+            layers.append('nexus')
+    
     # Retrieve geopackage information:
     if cpu_pool > 1:
         with Parallel(n_jobs=len(layers)) as parallel:
@@ -58,13 +64,15 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, cpu_pool):
                 )
             gpkg_list = parallel(jobs)
         table_dict = {layers[i]: gpkg_list[i] for i in range(len(layers))}
-        flowpaths = pd.merge(table_dict.get('flowpaths'), table_dict.get('flowpath_attributes'), on='id')
+        flowpaths = pd.merge(table_dict.get('flowpaths'), 
+                             table_dict.get('flowpath-attributes').rename(columns={'link': 'id'}), 
+                             on='id')
         lakes = table_dict.get('lakes', pd.DataFrame())
         network = table_dict.get('network', pd.DataFrame())
         nexus = table_dict.get('nexus', pd.DataFrame())
     else:
         flowpaths = gpd.read_file(file_path, layer='flowpaths')
-        flowpath_attributes = gpd.read_file(file_path, layer='flowpath_attributes')
+        flowpath_attributes = gpd.read_file(file_path, layer='flowpath-attributes')
         flowpaths = pd.merge(flowpaths, flowpath_attributes, on='id')
         # If waterbodies are being simulated, read lakes table
         lakes = pd.DataFrame()
@@ -159,7 +167,7 @@ def read_ngen_waterbody_type_df(parm_file, lake_index_field="wb-id", lake_id_mas
         
     return df
 
-def read_geo_file(supernetwork_parameters, waterbody_parameters, compute_parameters, cpu_pool):
+def read_geo_file(supernetwork_parameters, waterbody_parameters, compute_parameters, output_parameters, cpu_pool):
         
     geo_file_path = supernetwork_parameters["geo_file_path"]
     flowpaths = lakes = network = pd.DataFrame()
@@ -169,6 +177,7 @@ def read_geo_file(supernetwork_parameters, waterbody_parameters, compute_paramet
         flowpaths, lakes, network, nexus = read_geopkg(geo_file_path,
                                                        compute_parameters,
                                                        waterbody_parameters,
+                                                       output_parameters,
                                                        cpu_pool)
     elif(file_type == '.json'):
         edge_list = supernetwork_parameters['flowpath_edge_list']
@@ -269,6 +278,7 @@ class HYFeaturesNetwork(AbstractNetwork):
                     self.supernetwork_parameters,
                     self.waterbody_parameters,
                     self.compute_parameters,
+                    self.output_parameters,
                     self.compute_parameters.get('cpu_pool', 1)
                 )
             else:
@@ -424,9 +434,10 @@ class HYFeaturesNetwork(AbstractNetwork):
         filtered_flowpaths = flowpaths[mask_flowpaths]
         self._nexus_dict = filtered_flowpaths.groupby('toid')['id'].apply(list).to_dict()  ##{id: toid}
         if 'poi_id' in nexus.columns:
-            self._poi_nex_dict = nexus.groupby('poi_id')['id'].apply(list).to_dict()
+            # self._poi_nex_dict = nexus.groupby('poi_id')['id'].apply(list).to_dict()
+            self._poi_nex_df = nexus[nexus['type']=='poi'][['id','poi_id']]
         else:
-            self._poi_nex_dict = None
+            self._poi_nex_df = pd.DataFrame()
 
     def preprocess_waterbodies(self, lakes, nexus):
         # If waterbodies are being simulated, create waterbody dataframes and dictionaries
@@ -576,7 +587,10 @@ class HYFeaturesNetwork(AbstractNetwork):
             self._duplicate_ids_df = pd.DataFrame()
             self._gl_climatology_df = pd.DataFrame()
 
-        self._dataframe = self.dataframe.drop('waterbody', axis=1).drop_duplicates()
+        if 'waterbody' in self.dataframe.columns:
+            self._dataframe = self.dataframe.drop('waterbody', axis=1)
+        
+        self._dataframe = self.dataframe.drop_duplicates()
 
     def preprocess_data_assimilation(self, network):
         if not network.empty:
