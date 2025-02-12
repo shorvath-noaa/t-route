@@ -63,6 +63,16 @@ class SupernetworkParameters(BaseModel):
     """
     Specify if this is an NHD network or a HYFeatures network.
     """
+    flowlines: Optional[bool] = False
+    """
+    Specifiy if routing should be performed on flowlines rather than flowpaths (the default).
+    """
+    flow_attributes_path: Optional[FilePath] = None
+    """
+    File containing ML generated flowpath/flowline attributes. This will overwrite the flowpath/flowline-attributes
+    table in the geopackage.
+    NOTE: Choice of using flowpaths vs. flowlines should match the "flowlines:" configuration option above.
+    """
     flowpath_edge_list: Optional[str] = None
     """
     File containing dictionary of connections between segment IDs and nexus IDs.
