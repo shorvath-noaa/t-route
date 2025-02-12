@@ -354,7 +354,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             # Preprocess network objects
             self.preprocess_network(flowpaths, nexus)
             
-            self.crosswalk_nex_flowpath_poi(flowpaths, nexus)
+            self.crosswalk_nex_flowpath_poi(nexus)
 
             # Preprocess waterbody objects
             self.preprocess_waterbodies(lakes, nexus)
@@ -489,11 +489,9 @@ class HYFeaturesNetwork(AbstractNetwork):
         # to the model engine/coastal models
         self._nexus_latlon = nexus
 
-    def crosswalk_nex_flowpath_poi(self, flowpaths, nexus):
-        
-        mask_flowpaths = flowpaths['toid'].str.startswith(('nex-', 'tnex-'))
-        filtered_flowpaths = flowpaths[mask_flowpaths]
-        self._nexus_dict = filtered_flowpaths.groupby('toid')['id'].apply(list).to_dict()  ##{id: toid}
+    def crosswalk_nex_flowpath_poi(self, nexus):
+        self._nexus_dict = self.dataframe.reset_index().groupby('downstream')['key'].apply(list).to_dict()
+
         if 'poi_id' in nexus.columns:
             self._poi_nex_dict = nexus.groupby('poi_id')['id'].apply(list).to_dict()
         else:
