@@ -30,14 +30,16 @@ def find_layer_name(layers, pattern):
             return layer
     return None
 
-def read_geopkg(file_path, compute_parameters, waterbody_parameters, cpu_pool):
+def read_geopkg(file_path, supernetwork_parameters, compute_parameters, waterbody_parameters, cpu_pool):
     # Retrieve available layers from the GeoPackage
     available_layers = fiona.listlayers(file_path)
 
     # patterns for the layers we want to find
     layer_patterns = {
-        'flowpaths': r'flow[-_]?paths?|flow[-_]?lines?',
-        'flowpath_attributes': r'flow[-_]?path[-_]?attributes?|flow[-_]?line[-_]?attributes?',
+        'flowpaths': r'flow[-_]?paths?',
+        'flowpath_attributes': r'flow[-_]?path[-_]?attributes?',
+        'flowlines': r'flow[-_]?lines?',
+        'flowline_attributes': r'flow[-_]?line[-_]?attributes?',
         'lakes': r'lakes?',
         'nexus': r'nexus?',
         'network': r'network'
@@ -47,7 +49,21 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, cpu_pool):
     matched_layers = {key: find_layer_name(available_layers, pattern) 
                       for key, pattern in layer_patterns.items()}
     
-    layers_to_read = ['flowpaths', 'flowpath_attributes']
+    # Update from flowpaths to flowlines if specified by config file
+    if supernetwork_parameters.get('flowlines'):
+        layers_to_read = ['flowlines', 'flowline_attributes']
+        flow_type_str = 'flowline'
+    else:
+        layers_to_read = ['flowpaths', 'flowpath_attributes']
+        flow_type_str = 'flowpath'
+    
+    # Read flowpath/line attribtues from parquet file if specified by config file
+    if supernetwork_parameters.get('flow_attributes_path'):
+        layers_to_read.pop()
+        
+        flowpath_attributes_df = pd.read_parquet(supernetwork_parameters.get('flow_attributes_path'))
+    else:
+        flowpath_attributes_df = pd.DataFrame()
     
     if waterbody_parameters.get('break_network_at_waterbodies', False):
         layers_to_read.extend(['lakes', 'nexus'])
@@ -85,21 +101,50 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, cpu_pool):
         table_dict = {layer: read_layer(matched_layers[layer]) for layer in layers_to_read}
     
     # Handle different key column names between flowpaths and flowpath_attributes
-    flowpaths_df = table_dict.get('flowpaths', pd.DataFrame())
-    flowpath_attributes_df = table_dict.get('flowpath_attributes', pd.DataFrame())
-
-    # Check if 'link' column exists and rename it to 'id'
+    flowpaths_df = table_dict.get(layers_to_read[0], pd.DataFrame())
+    if flowpath_attributes_df.empty:
+        flowpath_attributes_df = table_dict.get(layers_to_read[1], pd.DataFrame())
+    
+    # Ensure that both flow* data frames are the same type (either flowpaths or flowlines)
+    #TODO: Pre-release of HFv3.0 has inconsistent ID types (flowpaths are chr with 'wb-' prefix,
+    # flowlines are numpy.float64). We need to compare IDs between flowpath/lines and attributes
+    # dataframes to ensure consistency. Doing it by type() here, but in the future this can be
+    # done by comparing prefixes (likely flowpaths: 'fp-' and flowlines: 'fl-')
+    #NOTE: Future method:
+    # if flowpaths_df['flow_type_str+'_id'][0].split('-')[0]!=flowpath_attributes_df['id'][0].split('-')[0]:
+    #     raise Exception(
+    #         '''
+    #         flow*_df and flow*_attributes_df are not the same type (one is flowline and one is flowpath).
+    #         Double check your configuration file to ensure these types are the same.
+    #         '''
+    #         )
+    
+    #NOTE: Current method:
+    if flow_type_str+'_id' not in flowpath_attributes_df.columns:
+        raise Exception(
+            '''
+            User specified use of flowlines or flowpaths do not match the given flowpath_attribute table.
+            '''
+        )
+        
+    
+    # Drop 'link' and 'to' columns if they exists; these are identical to 
+    # the 'id' and 'toid' columns.
     if 'link' in flowpath_attributes_df.columns:
-        flowpath_attributes_df.rename(columns={'link': 'id'}, inplace=True) 
-     
+        flowpath_attributes_df.drop(labels=['link'], axis=1, inplace=True)
+    
+    if 'to' in flowpath_attributes_df.columns:
+        flowpath_attributes_df.drop(labels=['to'], axis=1, inplace=True)
+    
+    # Change "ID" and "downstream" column names of flowpaths_df to match
     # Merge flowpaths and flowpath_attributes 
     flowpaths = pd.merge(
-        flowpaths_df, 
+        flowpaths_df[[flow_type_str+'_id', 'mainstem']], 
         flowpath_attributes_df, 
-        on='id', 
+        on=flow_type_str+'_id', 
         how='inner'
     )
-
+    
     lakes = table_dict.get('lakes', pd.DataFrame())
     network = table_dict.get('network', pd.DataFrame())
     nexus = table_dict.get('nexus', pd.DataFrame())
@@ -192,6 +237,7 @@ def read_geo_file(supernetwork_parameters, waterbody_parameters, compute_paramet
     file_type = Path(geo_file_path).suffix
     if(file_type=='.gpkg'):        
         flowpaths, lakes, network, nexus = read_geopkg(geo_file_path,
+                                                       supernetwork_parameters,
                                                        compute_parameters,
                                                        waterbody_parameters,
                                                        cpu_pool)
