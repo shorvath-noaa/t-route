@@ -583,10 +583,11 @@ class HYFeaturesNetwork(AbstractNetwork):
             
             #NOTE: Hard-coding the Great Lakes outflow toids. Ideally, these will be provided
             # by the hydrofabric, but current version does not support his (shorvath - 09/25/2024)
-            great_lakes_df = pd.DataFrame(
-                {'WBOut_id': [4800002, 4800004, 4800006, 4800007],
-                 'toid': ['wb-660226', 'wb-653294', 'wb-670032', 'wb-678009']}
-            )
+            # great_lakes_df = pd.DataFrame(
+            #     {'WBOut_id': [4800002, 4800004, 4800006, 4800007],
+            #      'toid': ['wb-660226', 'wb-653294', 'wb-670032', 'wb-678009']}
+            # )
+            great_lakes_df = pd.DataFrame()
             
             if not great_lakes_df.empty:
                 great_lakes_df['toid'] = great_lakes_df['toid'].str.extract(r'wb-(\d+)').astype(float)
@@ -725,7 +726,7 @@ class HYFeaturesNetwork(AbstractNetwork):
                 idx_id = 'index'
             
             self._gages = (
-                gages_df.loc[usgs_ind]
+                gages_df[['gage']].loc[usgs_ind]
                 .rename(columns={'gage': 'gages'})
                 .rename_axis(None, axis=0).to_dict()
             )
