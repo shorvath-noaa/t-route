@@ -663,7 +663,7 @@ class PersistenceDA(AbstractDA):
                 usgs_df = _reindex_link_to_lake_id(usgs_df, network.link_lake_crosswalk)
         
         # USACE
-        if reservoir_da_parameters.get('reservoir_persistence_da').get('reservoir_persistence_usace', False):
+        if reservoir_da_parameters.get('reservoir_persistence_da',{}).get('reservoir_persistence_usace', False):
             
             (
                 self._reservoir_usace_df,
