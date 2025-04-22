@@ -2419,6 +2419,8 @@ def write_flowveldepth(
         # Drop the first column
         nudge = nudge[:, 1:]
     nudge_df = pd.DataFrame(data=nudge, index=usgs_positions_id).iloc[:,ind]
+    nudge_df['Type'] = 'wb'
+    nudge_df.set_index('Type', append=True, inplace=True)
     empty_ids = list(set(flowveldepth.index).difference(set(nudge_df.index)))
     empty_df = pd.DataFrame(index=empty_ids, columns=nudge_df.columns).fillna(-9999.0)
     nudge_df = pd.concat([nudge_df, empty_df]).loc[flowveldepth.index]
