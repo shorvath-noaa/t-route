@@ -30,6 +30,28 @@ def find_layer_name(layers, pattern):
             return layer
     return None
 
+def read_geopkg_dev(file_path, supernetwork_parameters, compute_parameters, waterbody_parameters, cpu_pool):
+    
+    flow_type_str = 'flowpath'
+    
+    flowpaths_df = gpd.read_file(file_path, layer = flow_type_str + "s")
+    flowpath_attributes_df = gpd.read_file(file_path, layer = flow_type_str + "-attributes")
+    
+    flowpaths = pd.merge(
+        flowpaths_df, #[[flow_type_str+'_id', 'mainstem']], 
+        flowpath_attributes_df, 
+        on=flow_type_str+'_id', 
+        how='inner'
+    )
+    
+    table_dict = {}
+    
+    lakes = table_dict.get('lakes', pd.DataFrame())
+    network = table_dict.get('network', pd.DataFrame())
+    nexus = table_dict.get('nexus', pd.DataFrame())
+    
+    return flowpaths, lakes, network, nexus
+
 def read_geopkg(file_path, supernetwork_parameters, compute_parameters, waterbody_parameters, cpu_pool):
     # Retrieve available layers from the GeoPackage
     available_layers = fiona.listlayers(file_path)
@@ -236,7 +258,7 @@ def read_geo_file(supernetwork_parameters, waterbody_parameters, compute_paramet
     
     file_type = Path(geo_file_path).suffix
     if(file_type=='.gpkg'):        
-        flowpaths, lakes, network, nexus = read_geopkg(geo_file_path,
+        flowpaths, lakes, network, nexus = read_geopkg_dev(geo_file_path,
                                                        supernetwork_parameters,
                                                        compute_parameters,
                                                        waterbody_parameters,
@@ -438,8 +460,11 @@ class HYFeaturesNetwork(AbstractNetwork):
             self._dataframe = self.dataframe.rename(columns=reverse_dict(cols))
         
         # Don't need the string prefix anymore, drop it
-        mask = ~ self.dataframe['downstream'].str.startswith("tnx") 
-        self._dataframe = self.dataframe.apply(numeric_id, axis=1)
+        if pd.api.types.is_string_dtype(self.dataframe['downstream']):
+            mask = ~ self.dataframe['downstream'].str.startswith("tnx")
+            self._dataframe = self.dataframe.apply(numeric_id, axis=1) 
+        else:
+            mask = [True] * self.dataframe.shape[0]
         
         # make the flowpath linkage, ignore the terminal nexus
         self._flowpath_dict = dict(zip(self.dataframe.loc[mask].downstream, self.dataframe.loc[mask].key))
@@ -650,7 +675,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             self._duplicate_ids_df = pd.DataFrame()
             self._gl_climatology_df = pd.DataFrame()
 
-        self._dataframe = self.dataframe.drop('waterbody', axis=1).drop_duplicates()
+        self._dataframe = self.dataframe.drop('waterbody', axis=1, errors='ignore').drop_duplicates()
 
     def preprocess_data_assimilation(self, network):
         if not network.empty:
