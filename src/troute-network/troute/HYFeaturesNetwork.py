@@ -87,23 +87,27 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, cpu_pool):
     # Handle different key column names between flowpaths and flowpath_attributes
     flowpaths_df = table_dict.get('flowpaths', pd.DataFrame())
     flowpath_attributes_df = table_dict.get('flowpath_attributes', pd.DataFrame())
-
-    # Check if 'link' column exists and rename it to 'id'
+    
+    # Check if 'link' column exists; drop existing 'id' col; rename 'link' to 'id'
     if 'link' in flowpath_attributes_df.columns:
-        flowpath_attributes_df.rename(columns={'link': 'id'}, inplace=True) 
-     
+        # In HF 2.2, a 'link' field was introduced. The field is identical to
+        # previous version's 'id' field, but it preferred moving forwards.
+        flowpath_attributes_df.drop(columns=['id'], errors='ignore', inplace=True)
+        flowpath_attributes_df.rename(columns={'link': 'id'}, inplace=True)
+        
     # Merge flowpaths and flowpath_attributes 
     flowpaths = pd.merge(
         flowpaths_df, 
         flowpath_attributes_df, 
         on='id', 
-        how='inner'
+        how='inner',
+        suffixes=("", "_flowpath_attributes"),
     )
 
     lakes = table_dict.get('lakes', pd.DataFrame())
     network = table_dict.get('network', pd.DataFrame())
     nexus = table_dict.get('nexus', pd.DataFrame())
-
+    
     return flowpaths, lakes, network, nexus
 
 def read_json(file_path, edge_list):
@@ -457,14 +461,13 @@ class HYFeaturesNetwork(AbstractNetwork):
         # If waterbodies are being simulated, create waterbody dataframes and dictionaries
         if not lakes.empty:
             self._waterbody_df = (
-                lakes[['hl_link','ifd','LkArea','LkMxE','OrificeA',
-                       'OrificeC','OrificeE','WeirC','WeirE','WeirL','id']]
-                .rename(columns={'hl_link': 'lake_id'})
+                lakes[['lake_id','ifd','LkArea','LkMxE','OrificeA',
+                       'OrificeC','OrificeE','WeirC','WeirE','WeirL']]
                 )
             
-            id = self.waterbody_dataframe['id'].str.split('-', expand=True).iloc[:,1]
-            self._waterbody_df['id'] = id
-            self._waterbody_df['id'] = self._waterbody_df.id.astype(float).astype(int)
+            # id = self.waterbody_dataframe['id'].str.split('-', expand=True).iloc[:,1]
+            # self._waterbody_df['id'] = id
+            # self._waterbody_df['id'] = self._waterbody_df.id.astype(float).astype(int)
             self._waterbody_df['lake_id'] = self.waterbody_dataframe.lake_id.astype(float).astype(int)
             self._waterbody_df = self.waterbody_dataframe.set_index('lake_id').drop_duplicates().sort_index()
             
@@ -480,31 +483,33 @@ class HYFeaturesNetwork(AbstractNetwork):
             })
             update_dict = dict(self._duplicate_ids_df[['lake_id','synthetic_ids']].values)
             
-            tmp_wbody_conn = self.dataframe[['waterbody']].dropna()
-            tmp_wbody_conn = (
-                tmp_wbody_conn['waterbody']
-                .str.split(',',expand=True)
-                .reset_index()
-                .melt(id_vars='key')
-                .drop('variable', axis=1)
-                .dropna()
-                .astype(int)
-                )
-            tmp_wbody_conn = tmp_wbody_conn[tmp_wbody_conn['value'].isin(self.waterbody_dataframe.index)]
-            self._dataframe = (
-                self.dataframe
-                .reset_index()
-                .merge(tmp_wbody_conn, how='left', on='key')
-                .drop('waterbody', axis=1)
-                .rename(columns={'value': 'waterbody'})
-                .set_index('key')
-            )
+            # tmp_wbody_conn = self.dataframe[['waterbody']].dropna()
+            # tmp_wbody_conn = (
+            #     tmp_wbody_conn['waterbody']
+            #     .str.split(',',expand=True)
+            #     .reset_index()
+            #     .melt(id_vars='key')
+            #     .drop('variable', axis=1)
+            #     .dropna()
+            #     .astype(int)
+            #     )
+            # tmp_wbody_conn = tmp_wbody_conn[tmp_wbody_conn['value'].isin(self.waterbody_dataframe.index)]
+            # import pdb; pdb.set_trace()
+            # self._dataframe = (
+            #     self.dataframe
+            #     .reset_index()
+            #     .merge(tmp_wbody_conn, how='left', on='key')
+            #     .drop('waterbody', axis=1)
+            #     .rename(columns={'value': 'waterbody'})
+            #     .set_index('key')
+            # )
 
             self._waterbody_df = self.waterbody_dataframe.rename(index=update_dict).sort_index()
+            self._dataframe['waterbody'] = self.dataframe.waterbody.astype(pd.Int64Dtype())
             self._dataframe = self.dataframe.replace({'waterbody': update_dict})
             
             #FIXME temp solution for missing waterbody info in hydrofabric
-            self.bandaid()
+            # self.bandaid()
             
             wbody_conn = self.dataframe[['waterbody']].dropna().astype(int).reset_index()
             
@@ -546,8 +551,12 @@ class HYFeaturesNetwork(AbstractNetwork):
                 self._waterbody_df['crs'] = np.nan
                 
             # Add the Great Lakes to the connections dictionary and waterbody dataframe
-            nexus['WBOut_id'] = nexus['hl_uri'].str.extract(r'WBOut-(\d+)').astype(float)
-            great_lakes_df = nexus[nexus['WBOut_id'].isin([4800002,4800004,4800006,4800007])][['WBOut_id','toid']]
+            # nexus['WBOut_id'] = nexus['hl_uri'].str.extract(r'WBOut-(\d+)').astype(float)
+            # great_lakes_df = nexus[nexus['WBOut_id'].isin([4800002,4800004,4800006,4800007])][['WBOut_id','toid']]
+            
+            #NOTE: Great Lakes seem to not be available in v2.2 of hydrofabric...
+            great_lakes_df = pd.DataFrame()
+            
             if not great_lakes_df.empty:
                 great_lakes_df['toid'] = great_lakes_df['toid'].str.extract(r'wb-(\d+)').astype(float)
                 great_lakes_df = great_lakes_df.astype(int)
@@ -601,7 +610,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             self._duplicate_ids_df = pd.DataFrame()
             self._gl_climatology_df = pd.DataFrame()
 
-        self._dataframe = self.dataframe.drop('waterbody', axis=1).drop_duplicates()
+        self._dataframe = self.dataframe.drop('waterbody', axis=1, errors='ignore').drop_duplicates()
 
     def preprocess_data_assimilation(self, network):
         if not network.empty:
