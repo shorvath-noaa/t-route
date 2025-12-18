@@ -22,6 +22,7 @@ from .preprocess import (
     unpack_nwm_preprocess_data,
 )
 from .output import nwm_output_generator
+from .output_nextgen import NetCDFStreamWriter
 from .log_level_set import log_level_set
 from troute.routing.compute import compute_nhd_routing_v02, compute_diffusive_routing, compute_log_mc, compute_log_diff
 
@@ -141,6 +142,18 @@ def main_v04(argv):
     forcing_end_time = time.time()
     task_times['forcing_time'] += forcing_end_time - network_end_time
 
+    # Initialize the output NetCDF file if user specified
+    netcdf_stream_output = output_parameters.get('netcdf_stream_output', {})
+    if netcdf_stream_output.get('output_path', None):
+        writer = NetCDFStreamWriter()
+        writer.initialize(
+            config = netcdf_stream_output,
+            all_network_ids = network.dataframe.index.to_numpy(),
+            total_sim_seconds = run_parameters['dt'] * run_parameters['nts'],
+            start_time = network.t0,
+            dt = run_parameters['dt']
+        )
+    
     parallel_compute_method = compute_parameters.get("parallel_compute_method", None)
     subnetwork_target_size = compute_parameters.get("subnetwork_target_size", 1)
     qts_subdivisions = forcing_parameters.get("qts_subdivisions", 1)
@@ -324,7 +337,13 @@ def main_v04(argv):
             logFileName            
         )
         
-
+        # Write single NetCDF file output method:
+        if writer:
+            writer.write_step(
+                run_results = run_results,
+                current_chunk_start_time = t0
+            )
+        
         output_end_time = time.time()
         task_times['output_time'] += output_end_time - output_start_time
     
@@ -332,6 +351,7 @@ def main_v04(argv):
     
     # end of for run_set_iterator, run in enumerate(run_sets):
     
+    writer.close() if writer else None
     
     task_times['total_time'] = time.time() - main_start_time
 

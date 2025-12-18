@@ -25,6 +25,7 @@ class OutputParameters(BaseModel):
     test_output: Optional[Path] = None
     stream_output: Optional["StreamOutput"] = None
     lastobs_output: Optional[DirectoryPath] = None
+    netcdf_stream_output: Optional["NetcdfStreamOutput"] = None
 
 
 class ChanobsOutput(BaseModel):
@@ -189,7 +190,36 @@ class StreamOutput(BaseModel):
             if values.get('stream_output_time') != -1 and value / 60 > values['stream_output_time']:
                 raise ValueError("stream_output_internal_frequency should be less than or equal to stream_output_time in minutes.")
         return value
- 
+
+class NetcdfStreamOutput(BaseModel):
+    """
+    Configuration for a pre-allocated NetCDF output writer. This will output a single NetCDF file containing all locations and 
+    time steps for the full simulation.
+    """
+    output_path: str
+    """
+    Filepath to save output.
+    """
+    output_interval: int = 3600
+    """
+    Frequency of output in seconds.
+    """
+    subset_file: Optional[str] = None
+    """
+    Path to yaml file specifying flowpath IDs to include in output file.
+    """
+    variables: List[str] = ["streamflow", "velocity", "depth", "nudge"]
+    """
+    Variables to write. 
+    """
+    
+    # Validator to ensure variables are valid
+    @validator('variables')
+    def valid_variables(cls, v):
+        valid_set = {'streamflow', 'velocity', 'depth', 'nudge'}
+        if not set(v).issubset(valid_set):
+            raise ValueError(f"Variables must be a subset of {valid_set}")
+        return v
 
 OutputParameters.update_forward_refs()
 WrfHydroParityCheck.update_forward_refs()
