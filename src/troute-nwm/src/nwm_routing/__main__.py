@@ -144,7 +144,8 @@ def main_v04(argv):
 
     # Initialize the output NetCDF file if user specified
     netcdf_stream_output = output_parameters.get('netcdf_stream_output', {})
-    if netcdf_stream_output.get('output_path', None):
+    writer = None
+    if netcdf_stream_output and netcdf_stream_output.get('output_path', None):
         writer = NetCDFStreamWriter()
         writer.initialize(
             config = netcdf_stream_output,
