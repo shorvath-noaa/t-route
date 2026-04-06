@@ -114,9 +114,6 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
             flowpaths_df.groupby('flowpath_toid')['incremental_areasqkm'].transform('sum')
             )
         flowline_area_ratio = flowpaths_df[['flowline_id','flowpath_toid','area_ratio']].drop_duplicates()
-        
-        #TODO: finish runoff disaggregation
-        
     
     cols = supernetwork_parameters.get('columns', None)
     if cols:
@@ -285,7 +282,8 @@ class HYFeaturesNetwork(AbstractNetwork):
     """
     
     """
-    __slots__ = ["_upstream_terminal", "_nexus_latlon", "_duplicate_ids_df", "_ds", "_flowline_area_ratio"]
+    __slots__ = ["_upstream_terminal", "_nexus_latlon", "_duplicate_ids_df", "_ds", "_flowline_area_ratio",
+                 "_upstream_flowpath_dict", "_downstream_flowpath_dict"]
 
     def __init__(self, 
                  supernetwork_parameters, 
@@ -392,8 +390,12 @@ class HYFeaturesNetwork(AbstractNetwork):
 
     @property
     def downstream_flowpath_dict(self):
-        return self._flowpath_dict
-
+        return self._downstream_flowpath_dict
+    
+    @property
+    def upstream_flowpath_dict(self):
+        return self._upstream_flowpath_dict
+    
     @property
     def waterbody_connections(self):
         """
@@ -421,7 +423,8 @@ class HYFeaturesNetwork(AbstractNetwork):
         self._dataframe = self.dataframe.apply(numeric_id, axis=1)
         
         # make the flowpath linkage, ignore the terminal nexus
-        self._flowpath_dict = dict(zip(self.dataframe.downstream, self.dataframe.key))
+        self._upstream_flowpath_dict = dict(zip(self.dataframe.downstream, self.dataframe.key))
+        self._downstream_flowpath_dict = dict(zip(self.dataframe.key, self.dataframe.downstream))
         
         self._dataframe.set_index("key", inplace=True)
         self._dataframe = self.dataframe.sort_index()
@@ -761,36 +764,38 @@ class HYFeaturesNetwork(AbstractNetwork):
                 nexuses_lateralflows_df = ds_slice['runoff_rate'].transpose("feature_id", "time").to_pandas()
                 nexuses_lateralflows_df.columns = nexuses_lateralflows_df.columns.strftime('%Y%m%d%H%M')
                 
-                '''
-                self._flowline_area_ratio['flowpath_id'] = self._flowline_area_ratio['flowpath_id'].str.replace('fp-', '').astype(float).astype(int)
-                self._flowline_area_ratio['flowline_id'] = self._flowline_area_ratio['flowline_id'].astype(int)
-                
-                # Identify the time columns (everything currently in nexuses_lateralflows_df)
-                time_cols = nexuses_lateralflows_df.columns
-                
-                # Merge the lateral flows df with the area ratio df
-                merged_nexuses_lateralflows_df = nexuses_lateralflows_df.merge(
-                    self._flowline_area_ratio,
-                    left_index=True, 
-                    right_on='flowpath_id',
-                    how='inner'
-                )
+                # If running on flowlines, we need to redistribute the lateral flow from nexus points to all contributing
+                # flowlines in that catchment (by incremental area ratios).
+                if not self._flowline_area_ratio.empty:
+                    self._flowline_area_ratio['flowpath_toid'] = self._flowline_area_ratio['flowpath_toid'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
+                    self._flowline_area_ratio['flowline_id'] = self._flowline_area_ratio['flowline_id'].astype(int)
+                    
+                    time_cols = nexuses_lateralflows_df.columns
+                    merged_nexuses_lateralflows_df = nexuses_lateralflows_df.merge(
+                        self._flowline_area_ratio,
+                        left_index=True, 
+                        right_on='flowpath_toid',
+                        how='inner'
+                    )
 
-                # Multiply all the time columns by the 'area_ratio'
-                merged_nexuses_lateralflows_df[time_cols] = merged_nexuses_lateralflows_df[time_cols].multiply(merged_nexuses_lateralflows_df['area_ratio'], axis=0)
-
-                # 4. Set the new index to 'flowline_id' and filter down to just the time columns
-                nexuses_lateralflows_df2 = merged_nexuses_lateralflows_df.set_index('flowline_id')[time_cols]
+                    merged_nexuses_lateralflows_df[time_cols] = merged_nexuses_lateralflows_df[time_cols].multiply(merged_nexuses_lateralflows_df['area_ratio'], axis=0)
+                    nexuses_lateralflows_df = merged_nexuses_lateralflows_df.set_index('flowline_id')[time_cols]
+                    
+                    # We are assuming all lateral flow actually enters the system at the entry to the segment directly
+                    # downstream, so we adjust the index values here.
+                    qlats_df = nexuses_lateralflows_df.rename(index=self.downstream_flowpath_dict)
+                    # Then beccause a segment can have multiple segments direclty upstream, we need to add those together.
+                    qlats_df = qlats_df.groupby(level=0).sum()
+                    
+                else:
+                    # Transfer q_lat from nexus to upstream flowpath
+                    # qlats_df = nexuses_lateralflows_df.rename(index=self.downstream_flowpath_dict)
+                    
+                    # Because nexus points share an integer value with the immediate downstream flowpath,
+                    # we don't need to do a nexus-to-flowpath transfer if we want nexus q_lateral to enter the
+                    # network at the downstream flowpath
+                    qlats_df = nexuses_lateralflows_df
                 
-                #TODO: finish runoff disaggregation
-                
-                # Transfer q_lat from nexus to upstream flowpath
-                qlats_df = nexuses_lateralflows_df.rename(index=self.downstream_flowpath_dict)
-                '''
-                # Because nexus points share an integer value with the immediate downstream flowpath,
-                # we don't need to do a nexus-to-flowpath transfer if we want nexus q_lateral to enter the
-                # network at the downstream flowpath
-                qlats_df = nexuses_lateralflows_df
                 qlats_df = qlats_df[qlats_df.index.isin(self.segment_index)]
                 
                 all_df = pd.DataFrame( np.zeros( (len(self.segment_index), len(qlats_df.columns)) ), index=self.segment_index,
@@ -838,10 +843,9 @@ class HYFeaturesNetwork(AbstractNetwork):
                         df = df.set_index('feature_id')
                         dfs.append(df)
                 
-                    # lateral flows [m^3/s] are stored at NEXUS points with NEXUS ids
                     nexuses_lateralflows_df = pd.concat(dfs, axis=1) 
                 
-                # Take flowpath ids entering NEXUS and replace NEXUS ids by the upstream flowpath ids
+                # Take flowpath ids entering nexus and replace nexus ids by the upstream flowpath ids
                 qlats_df = nexuses_lateralflows_df.rename(index=self.downstream_flowpath_dict)
                 qlats_df = qlats_df[qlats_df.index.isin(self.segment_index)]
                 
@@ -887,8 +891,11 @@ class HYFeaturesNetwork(AbstractNetwork):
             # at terminal nodes back to the immediate updstream flowpath.
             for tnx, test_up in self._upstream_terminal.items():
                 for fp in test_up:
-                    qlats_df.loc[fp] += nexuses_lateralflows_df.loc[tnx] #TODO: use 'mainstem' or 'order' to decide which upstream fp to use if there are multiple.
-                    break #flow added, don't add it again!
+                    try:
+                        qlats_df.loc[fp] += nexuses_lateralflows_df.loc[tnx] #TODO: use 'mainstem' or 'order' to decide which upstream fp to use if there are multiple.
+                        break #flow added, don't add it again!
+                    except KeyError:
+                        continue
                    
         elif qlat_input_file:
             qlats_df = nhd_io.get_ql_from_csv(qlat_input_file)
