@@ -61,9 +61,10 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     layers_to_read = ['flowpaths', 'flowpath_attributes']
     
     if waterbody_parameters.get('break_network_at_waterbodies', False):
-        layers_to_read.extend(['lakes', 'nexus'])
+        layers_to_read.extend(['lakes', 'nexus', 'network']) #NOTE: 'network' layer for hfv3 beta testing, might need to remove later...
 
     data_assimilation_parameters = compute_parameters.get('data_assimilation_parameters', {})
+    da = False
     if any([
         data_assimilation_parameters.get('streamflow_da', {}).get('streamflow_nudging', False),
         data_assimilation_parameters.get('reservoir_da', {}).get('reservoir_persistence_usgs', False),
@@ -71,11 +72,15 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
         data_assimilation_parameters.get('reservoir_da', {}).get('reservoir_rfc_da', {}).get('reservoir_rfc_forecasts', False)
     ]):
         layers_to_read.append('network')
+        da = True
 
     hybrid_parameters = compute_parameters.get('hybrid_parameters', {})
-    if hybrid_parameters.get('run_hybrid_routing', False) and 'nexus' not in layers_to_read:
+    if hybrid_parameters.get('run_hybrid_routing', False):
         layers_to_read.append('nexus')
 
+    # Filter out any repeat layers:
+    layers_to_read = list(set(layers_to_read))
+    
     # Function that read a layer from the geopackage
     def read_layer(layer_name):
         if layer_name:
@@ -138,6 +143,20 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     network = table_dict.get('network', pd.DataFrame())
     nexus = table_dict.get('nexus', pd.DataFrame())
     
+    if not lakes.empty:
+        #NOTE: Temporary (probably) solution, we get the flowpath/flowline to waterbody ID crosswalk from
+        # the network table (hf_v3 beta version). 
+        flowpaths = pd.merge(
+            flowpaths, 
+            network[[id_var, 'lake_id']].dropna().rename(columns={'lake_id': 'waterbody'}), 
+            left_on='key', 
+            right_on=id_var,
+            how='inner',
+        ).drop(id_var, axis=1)
+    
+    if not da:
+        network = pd.DataFrame()
+        
     return flowpaths, lakes, network, nexus, flowline_area_ratio
 
 def read_json(file_path, edge_list):
@@ -437,11 +456,13 @@ class HYFeaturesNetwork(AbstractNetwork):
         if 'gages' in self.dataframe:
             self._dataframe = self.dataframe.drop('gages', axis=1)
         
+        '''
         # Remove headwater flowpaths from our dataframe and network. Flow will be transferred from
         # nexus points to downstream flowpaths, so headwaters will never have water enter them. We 
         # therefore don't need to route them.
         headwater_fps = self.dataframe[~self.dataframe.index.isin(self.dataframe["downstream"])].index.values
         self._dataframe = self.dataframe.drop(headwater_fps)
+        '''
         
         # numeric code used to indicate network terminal segments
         terminal_code = self.supernetwork_parameters.get("terminal_code", 0)
@@ -534,7 +555,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             #     .rename(columns={'value': 'waterbody'})
             #     .set_index('key')
             # )
-
+            
             self._waterbody_df = self.waterbody_dataframe.rename(index=update_dict).sort_index()
             self._dataframe['waterbody'] = self.dataframe.waterbody.astype(pd.Int64Dtype())
             self._dataframe = self.dataframe.replace({'waterbody': update_dict})
