@@ -143,6 +143,7 @@ def main_v04(argv):
     task_times['forcing_time'] += forcing_end_time - network_end_time
 
     # Initialize the output NetCDF file if user specified
+    output_start_time = time.time()
     netcdf_stream_output = output_parameters.get('netcdf_stream_output', {})
     writer = None
     if netcdf_stream_output and netcdf_stream_output.get('output_path', None):
@@ -154,6 +155,8 @@ def main_v04(argv):
             start_time = network.t0,
             dt = run_parameters['dt']
         )
+    output_end_time = time.time()
+    task_times['output_time'] += output_end_time - output_start_time
     
     parallel_compute_method = compute_parameters.get("parallel_compute_method", None)
     subnetwork_target_size = compute_parameters.get("subnetwork_target_size", 1)
@@ -352,7 +355,10 @@ def main_v04(argv):
     
     # end of for run_set_iterator, run in enumerate(run_sets):
     
+    output_start_time = time.time()
     writer.close() if writer else None
+    output_end_time = time.time()
+    task_times['output_time'] += output_end_time - output_start_time
     
     task_times['total_time'] = time.time() - main_start_time
 
