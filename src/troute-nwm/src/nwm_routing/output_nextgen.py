@@ -53,19 +53,19 @@ class NetCDFStreamWriter(AbstractOutputWriter):
 
         LOG.info(f"Initializing NetCDF Stream Output: {output_path}")
 
-        # 1. Calculate Total Output Steps
+        # Calculate Total Output Steps
         self.total_steps = int(total_sim_seconds // output_interval)
         
-        # 2. Setup ID Indexing
+        # Setup ID Indexing
         self._setup_indexing(all_network_ids)
 
-        # 3. Create NetCDF
+        # Create NetCDF
         self.nc = nc.Dataset(output_path, "w", format="NETCDF4")
         self.nc.createDimension("time", self.total_steps)
         self.nc.createDimension("feature_id", len(self.output_ids))
         self.nc.createDimension("reference_time", 1)
 
-        # 4. Coordinates
+        # Coordinates
         v_id = self.nc.createVariable("feature_id", "i4", ("feature_id",))
         v_id[:] = self.output_ids
 
@@ -74,7 +74,7 @@ class NetCDFStreamWriter(AbstractOutputWriter):
         v_time.calendar = "standard"
         v_time.long_name = "valid output time"
         
-        # 5. Data Variables
+        # Data Variables
         # Chunking Strategy: Optimize for writing one full timestep at a time (1 x N)
         chunk_dims = (1, len(self.output_ids))
         comp_args = {'zlib': True, 'complevel': 2, 'fill_value': np.nan, 'chunksizes': chunk_dims}
@@ -113,7 +113,7 @@ class NetCDFStreamWriter(AbstractOutputWriter):
     def write_step(self, run_results: List[Tuple], current_chunk_start_time: datetime):
         if self.nc is None or not run_results: return
         
-        # 1. Determine dimensions
+        # Determine dimensions
         sample_r = run_results[0]
         if sample_r[1] is None: return 
         ncols = sample_r[1].shape[1]
@@ -121,7 +121,7 @@ class NetCDFStreamWriter(AbstractOutputWriter):
         
         output_interval = self.cfg['output_interval']
         
-        # 2. Iterate through internal timesteps
+        # Iterate through internal timesteps
         for i in range(1, nts_chunk + 1):
             step_time = current_chunk_start_time + timedelta(seconds=i * self.dt)
             time_since_start = (step_time - self.global_start_time).total_seconds()
@@ -169,7 +169,7 @@ class NetCDFStreamWriter(AbstractOutputWriter):
             # Extract Data
             for var_name in variables:
                 if var_name == 'nudge':
-                    #TODO: Update to include nudge values. Skipping for now.
+                    #TODO: Update to include nudge values.
                     # Nudge Logic: Usually r[8]. Needs Mapping if Nudge IDs != Seg IDs
                     pass
                 elif var_name in self.var_offsets:
