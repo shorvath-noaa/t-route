@@ -1,5 +1,18 @@
-NETCDFINC := -I$(NETCDFINC) $(shell nc-config --fflags)
-NETCDFLIB := $(shell nc-config --flibs)
+NF_CONFIG := $(shell command -v nf-config 2> /dev/null)
+
+ifdef NF_CONFIG
+    # Modern approach (NetCDF-Fortran separated from NetCDF-C)
+    NETCDFINC_FLAGS := $(shell nf-config --fflags)
+    NETCDFLIB_FLAGS := $(shell nf-config --flibs)
+else
+    # Legacy fallback for older versions or monolithic installs
+    NETCDFINC_FLAGS := $(shell nc-config --fflags 2> /dev/null || nc-config --cflags)
+    NETCDFLIB_FLAGS := $(shell nc-config --flibs 2> /dev/null || nc-config --libs)
+endif
+
+NETCDFINC := -I$(NETCDFINC) $(NETCDFINC_FLAGS)
+NETCDFLIB := $(NETCDFLIB_FLAGS)
+
 COMPILER90 = $(F90)
 
 F90FLAGSGFORTRAN = -w -c -ffree-form -ffree-line-length-none -fconvert=big-endian -frecord-marker=4 -static-libgfortran -lgfortran -lgcc -static-libgcc 
