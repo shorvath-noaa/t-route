@@ -153,7 +153,8 @@ def main_v04(argv):
             all_network_ids = network.dataframe.index.to_numpy(),
             total_sim_seconds = run_parameters['dt'] * run_parameters['nts'],
             start_time = network.t0,
-            dt = run_parameters['dt']
+            dt = run_parameters['dt'],
+            rconn = network.reverse_network
         )
     output_end_time = time.time()
     task_times['output_time'] += output_end_time - output_start_time
