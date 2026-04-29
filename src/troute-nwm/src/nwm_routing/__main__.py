@@ -22,7 +22,7 @@ from .preprocess import (
     unpack_nwm_preprocess_data,
 )
 from .output import nwm_output_generator
-from .output_nextgen import NetCDFStreamWriter
+from .output_nextgen import OutputWriter
 from .log_level_set import log_level_set
 from troute.routing.compute import compute_nhd_routing_v02, compute_diffusive_routing, compute_log_mc, compute_log_diff
 
@@ -144,17 +144,18 @@ def main_v04(argv):
 
     # Initialize the output NetCDF file if user specified
     output_start_time = time.time()
-    netcdf_stream_output = output_parameters.get('netcdf_stream_output', {})
-    writer = None
-    if netcdf_stream_output and netcdf_stream_output.get('output_path', None):
-        writer = NetCDFStreamWriter()
-        writer.initialize(
-            config = netcdf_stream_output,
+    netcdf_output = output_parameters.get('netcdf_output', {})
+    output_writer = None
+    if netcdf_output and netcdf_output.get('output_path', None):
+        output_writer = OutputWriter(
+            cfg = netcdf_output,
             all_network_ids = network.dataframe.index.to_numpy(),
             total_sim_seconds = run_parameters['dt'] * run_parameters['nts'],
             start_time = network.t0,
             dt = run_parameters['dt'],
-            rconn = network.reverse_network
+            rconn = network.reverse_network,
+            waterbody_df = network.waterbody_dataframe,
+            waterbody_types_df = network.waterbody_types_dataframe,
         )
     output_end_time = time.time()
     task_times['output_time'] += output_end_time - output_start_time
@@ -273,7 +274,6 @@ def main_v04(argv):
         subnetwork_list = run_results[1]
         run_results = run_results[0]
 
-        
         route_end_time = time.time()
         task_times['route_time'] += route_end_time - route_start_time
 
@@ -318,6 +318,8 @@ def main_v04(argv):
 
         output_start_time = time.time()  
         
+        LOG.info(f"Handling output ...")
+        
         #TODO Update this to work with either network type...
         nwm_output_generator(
             run,
@@ -343,21 +345,23 @@ def main_v04(argv):
         )
         
         # Write single NetCDF file output method:
-        if writer:
-            writer.write_step(
+        if output_writer:
+            output_writer.write_step(
                 run_results = run_results,
                 current_chunk_start_time = t0
             )
         
         output_end_time = time.time()
         task_times['output_time'] += output_end_time - output_start_time
-    
+
+        LOG.debug("output complete in %s seconds." % (time.time() - output_start_time))
+
         firstRun = False
     
     # end of for run_set_iterator, run in enumerate(run_sets):
     
     output_start_time = time.time()
-    writer.close() if writer else None
+    output_writer.close() if output_writer else None
     output_end_time = time.time()
     task_times['output_time'] += output_end_time - output_start_time
     
