@@ -520,6 +520,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             # id = self.waterbody_dataframe['id'].str.split('-', expand=True).iloc[:,1]
             # self._waterbody_df['id'] = id
             # self._waterbody_df['id'] = self._waterbody_df.id.astype(float).astype(int)
+            self._waterbody_df = self._waterbody_df.copy()
             self._waterbody_df['lake_id'] = self.waterbody_dataframe.lake_id.astype(float).astype(int)
             self._waterbody_df = self.waterbody_dataframe.set_index('lake_id').drop_duplicates().sort_index()
             
@@ -585,8 +586,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             # Add lat, lon, and crs columns for LAKEOUT files:
             lakeout = self.output_parameters.get("lakeout_output", None)
             if lakeout:
-                lat_lon_crs = lakes[['hl_link','hl_reference','geometry']].rename(columns={'hl_link': 'lake_id'})
-                lat_lon_crs = lat_lon_crs[lat_lon_crs['hl_reference']=='WBOut']
+                lat_lon_crs = lakes[['lake_id','geometry']]
                 lat_lon_crs['lake_id'] = lat_lon_crs.lake_id.astype(float).astype(int)
                 lat_lon_crs = lat_lon_crs.set_index('lake_id').drop_duplicates().sort_index()
                 lat_lon_crs = lat_lon_crs[lat_lon_crs.index.isin(self.waterbody_dataframe.index)]
