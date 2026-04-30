@@ -119,6 +119,8 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
             flowpaths_df.groupby('flowpath_toid')['incremental_areasqkm'].transform('sum')
             )
         flowline_area_ratio = flowpaths_df[['flowline_id','flowpath_toid','area_ratio']].drop_duplicates()
+        flowline_area_ratio['flowpath_toid'] = flowline_area_ratio['flowpath_toid'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
+        flowline_area_ratio['flowline_id'] = flowline_area_ratio['flowline_id'].astype(int)
     
     cols = supernetwork_parameters.get('columns', None)
     if cols:
@@ -139,6 +141,10 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     )
     flowpaths = flowpaths.rename(columns=reverse_dict(cols))
     
+    # Drop str prefixes from segment IDs
+    flowpaths['key'] = flowpaths['key'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
+    flowpaths['downstream'] = flowpaths['downstream'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
+    
     lakes = table_dict.get('lakes', pd.DataFrame())
     network = table_dict.get('network', pd.DataFrame())
     nexus = table_dict.get('nexus', pd.DataFrame())
@@ -148,10 +154,10 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
         # the network table (hf_v3 beta version). 
         flowpaths = pd.merge(
             flowpaths, 
-            network[[id_var, 'lake_id']].dropna().rename(columns={'lake_id': 'waterbody'}), 
+            network[[id_var, 'lake_id']].dropna().drop_duplicates().rename(columns={'lake_id': 'waterbody'}), 
             left_on='key', 
             right_on=id_var,
-            how='inner',
+            how='left',
         ).drop(id_var, axis=1)
     
     if not da:
@@ -302,7 +308,7 @@ class HYFeaturesNetwork(AbstractNetwork):
     
     """
     __slots__ = ["_upstream_terminal", "_nexus_latlon", "_duplicate_ids_df", "_ds", "_flowline_area_ratio",
-                 "_upstream_flowpath_dict", "_downstream_flowpath_dict"]
+                 "_upstream_flowpath_dict", "_downstream_flowpath_dict", "_compute_node_crosswalk_df"]
 
     def __init__(self, 
                  supernetwork_parameters, 
@@ -438,8 +444,16 @@ class HYFeaturesNetwork(AbstractNetwork):
     def preprocess_network(self, flowpaths, nexus):
         self._dataframe = flowpaths
         
-        # Don't need the string prefix anymore, drop it
-        self._dataframe = self.dataframe.apply(numeric_id, axis=1)
+        # Split the network into "compute" nodes
+        self._compute_node_crosswalk_df = pd.DataFrame()
+        if self.compute_parameters.get("compute_nodes", False):
+            (
+                self._dataframe, 
+                self._compute_node_crosswalk_df
+                )= split_river_segments(
+                    self.dataframe, 
+                    self.compute_parameters.get("compute_node_target_length", 270.0)
+                    )
         
         # make the flowpath linkage, ignore the terminal nexus
         self._upstream_flowpath_dict = dict(zip(self.dataframe.downstream, self.dataframe.key))
@@ -788,9 +802,6 @@ class HYFeaturesNetwork(AbstractNetwork):
                 # If running on flowlines, we need to redistribute the lateral flow from nexus points to all contributing
                 # flowlines in that catchment (by incremental area ratios).
                 if not self._flowline_area_ratio.empty:
-                    self._flowline_area_ratio['flowpath_toid'] = self._flowline_area_ratio['flowpath_toid'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
-                    self._flowline_area_ratio['flowline_id'] = self._flowline_area_ratio['flowline_id'].astype(int)
-                    
                     time_cols = nexuses_lateralflows_df.columns
                     merged_nexuses_lateralflows_df = nexuses_lateralflows_df.merge(
                         self._flowline_area_ratio,
@@ -937,6 +948,13 @@ class HYFeaturesNetwork(AbstractNetwork):
         if not self.segment_index.empty:
             qlats_df = qlats_df[qlats_df.index.isin(self.segment_index)]
 
+        # Redistribute forcing to compute nodes of they are being used
+        if self.compute_parameters.get("compute_nodes", False):
+            qlats_df = redistribute_forcing_values(
+                qlats_df, 
+                self._compute_node_crosswalk_df
+                )
+        
         self._qlateral = qlats_df
 
     ######################################################################
@@ -1167,3 +1185,84 @@ def replace_waterbodies_connections(connections, waterbodies):
             new_conn[n] = connections[n]
     
     return new_conn, link_lake
+
+def split_river_segments(
+    param_df: pd.DataFrame, 
+    min_length: float = 270.0
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    
+    if min_length < 270.0:
+        raise ValueError(f"min_length must be >= 270.0")
+    
+    dx_vals = param_df['dx'].values
+    repeats = np.maximum((dx_vals // min_length).astype(np.int32), 1)
+    max_existing_id = max(param_df['key'].max(), param_df['downstream'].max())
+    
+    # Expand the dataframe
+    df_expanded = {col: np.repeat(param_df[col].values, repeats) for col in param_df.columns}
+    n_total_rows = repeats.sum()
+    
+    # Apply the newly sliced dx values
+    df_expanded['dx'] = np.repeat(dx_vals / repeats, repeats)
+    
+    seq = np.arange(n_total_rows)
+    group_starts = np.insert(np.cumsum(repeats)[:-1], 0, 0)
+    repeated_starts = np.repeat(group_starts, repeats)
+    
+    sub_seq = seq - repeated_starts + 1
+    total_segs = np.repeat(repeats, repeats)
+    
+    # Generate new IDs
+    mask_new_ids = sub_seq > 1
+    num_new_ids_needed = mask_new_ids.sum()
+    
+    original_key = df_expanded['key'].copy() 
+    new_key = original_key.copy()
+    
+    if num_new_ids_needed > 0:
+        new_ids = np.arange(max_existing_id + 1, max_existing_id + 1 + num_new_ids_needed)
+        new_key[mask_new_ids] = new_ids
+        
+    df_expanded['key'] = new_key
+    
+    new_downstream = np.empty(n_total_rows, dtype=original_key.dtype)
+    new_downstream[:-1] = new_key[1:]
+    
+    # The last segment of each group keeps the original downstream connection
+    is_last = sub_seq == total_segs
+    new_downstream[is_last] = df_expanded['downstream'][is_last]
+    
+    df_expanded['downstream'] = new_downstream
+    
+    new_param_df = pd.DataFrame(df_expanded)
+    
+    crosswalk_df = pd.DataFrame({
+        'key': new_key,
+        'original_key': original_key,
+        'is_furthest_downstream': is_last
+    })
+    
+    return new_param_df, crosswalk_df
+
+def redistribute_forcing_values(
+    qlats_df: pd.DataFrame, 
+    crosswalk_df: pd.DataFrame
+    ) -> pd.DataFrame:
+    """
+    Redistributes forcing values evenly across new sub-segments.
+    """
+    # Filter crosswalk df to only those needed for joining with qlats_df
+    crosswalk_df = crosswalk_df[crosswalk_df['original_key'].isin(qlats_df.index)]
+    
+    # Count how many sub-segments each original segment was split into
+    split_counts = crosswalk_df['original_key'].value_counts()
+    
+    # Divide the original forcing values by the number of sub-segments
+    qlats_divided = qlats_df.div(split_counts, axis='index')
+    
+    # Reindex and finalize new qlats_df
+    new_qlats_df = qlats_divided.reindex(crosswalk_df['original_key'].values)
+    new_qlats_df.index = crosswalk_df['key'].values
+    new_qlats_df.index.name = 'flowline_id'
+    
+    return new_qlats_df
