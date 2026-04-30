@@ -63,6 +63,14 @@ class ComputeParameters(BaseModel):
     """
     If True, Courant metrics are returnd with simulations. This only works for MC simulations
     """
+    compute_nodes: bool = False
+    """
+    Should individual river segments be broken up into small "compute" nodes.
+    """
+    compute_node_target_length: Optional[float] = 270.0
+    """
+    Target length for "compute" nodes.
+    """
 
     restart_parameters: "RestartParameters" = Field(default_factory=dict)
     hybrid_parameters: "HybridParameters" = Field(default_factory=dict)
