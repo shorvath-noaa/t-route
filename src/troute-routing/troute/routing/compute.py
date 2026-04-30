@@ -39,11 +39,15 @@ def _format_qlat_start_time(qlat_start_time):
 
 def _build_reach_type_list(reach_list, wbodies_segs):
 
-    reach_type_list = [
-                1 if (set(reaches) & wbodies_segs) else 0 for reaches in reach_list
-            ]
-
-    return list(zip(reach_list, reach_type_list))
+    reach_type_list_array = np.zeros(len(reach_list), dtype=np.uint8)
+    for i in range(len(reach_list)):
+        reaches = reach_list[i]
+        for reach in reaches:
+            if reach in wbodies_segs:
+                reach_type_list_array[i] = 1
+                break
+    
+    return list(zip(reach_list, reach_type_list_array))
 
 
 def _prep_da_dataframes(
