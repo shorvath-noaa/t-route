@@ -888,14 +888,13 @@ def compute_nhd_routing_v02(
                     for ci, (cluster, clustered_subns) in enumerate(
                         reaches_ordered_bysubntw_clustered[order].items()
                     ):
+                        subn_tw_sortposition_list = (results_subn[order][ci][0].tolist())
                         for subn_tw in clustered_subns["tw"]:
                             # TODO: This index step is necessary because we sort the segment index
                             # TODO: I think there are a number of ways we could remove the sorting step
                             #       -- the binary search could be replaced with an index based on the known topology
                             flowveldepth_interorder[subn_tw] = {}
-                            subn_tw_sortposition = (
-                                results_subn[order][ci][0].tolist().index(subn_tw)
-                            )
+                            subn_tw_sortposition = subn_tw_sortposition_list.index(subn_tw)
                             flowveldepth_interorder[subn_tw]["results"] = results_subn[
                                 order
                             ][ci][1][subn_tw_sortposition]
