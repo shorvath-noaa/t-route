@@ -141,9 +141,13 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     )
     flowpaths = flowpaths.rename(columns=reverse_dict(cols))
     
-    # Drop str prefixes from segment IDs
-    flowpaths['key'] = flowpaths['key'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
-    flowpaths['downstream'] = flowpaths['downstream'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
+    # Drop str prefixes from flowpath segment IDs. Make flowpaths/flowlines integers
+    if "line" not in flow_type:
+        flowpaths['key'] = flowpaths['key'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
+        flowpaths['downstream'] = flowpaths['downstream'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
+    else: 
+        flowpaths['key'] = flowpaths['key'].astype(float).astype(int)
+        flowpaths['downstream'] = flowpaths['downstream'].astype(float).astype(int)
     
     lakes = table_dict.get('lakes', pd.DataFrame())
     network = table_dict.get('network', pd.DataFrame())
