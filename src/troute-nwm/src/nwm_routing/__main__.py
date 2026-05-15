@@ -210,7 +210,12 @@ def main_v04(argv):
     # Disable in case there is no log file
     if (not kernelTalks):
         firstRun = False
-
+        
+    # Instantiate the compute methodology
+    from troute.routing.ComputeClasses import Serial
+    compute_obj = Serial(network)
+    compute_obj.subset_network(network, forcing_parameters.get('dt'))
+    
     for run_set_iterator, run in enumerate(run_sets):
         
         t0 = run.get("t0")
