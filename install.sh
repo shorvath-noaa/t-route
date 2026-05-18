@@ -6,15 +6,32 @@ set -e
 echo "--- Starting t-route Installation ---"
 
 # If on a cluster platform that requires module load
-# commands to load up python, cmake, netcdf, and/or gcc
-# then go ahead and insert those moudle commands here. 
-# Below are example moudle load commnads for the NOAA
-# RDHPCS Ursa cluster
+# commands to load up python, cmake, netcdf, and gcc 
+# or intel compilers and then go ahead and insert 
+# those module commands here. Below are example 
+# module load commands for the NOAA RDHPCS Ursa cluster
 module purge
-module load hpcx-mpi/2.18.1
+
+####### gcc/gfortran compilers ##############
+#module load hpcx-mpi/2.18.1
+#module load netcdf-fortran/4.6.1
+#module load cmake/3.30.2
+#module load python/3.11
+#export FC=gfortran
+#export CC=gcc
+#export CXX=g++
+############################################
+
+####### intel compilers ####################
+module load intel-oneapi-compilers/2025.1.1
+module load intel-oneapi-mpi/2021.15.0
 module load netcdf-fortran/4.6.1
 module load cmake/3.30.2
 module load python/3.11
+export FC=mpiifx
+export CC=mpiicx
+export CXX=mpiicpx
+############################################
 
 
 
