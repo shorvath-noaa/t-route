@@ -13,7 +13,7 @@ endif
 NETCDFINC := -I$(NETCDFINC) $(NETCDFINC_FLAGS)
 NETCDFLIB := $(NETCDFLIB_FLAGS)
 
-FC = $(FC)
+FC := $(FC)
 
 F90FLAGSGFORTRAN = -w -c -ffree-form -ffree-line-length-none -fconvert=big-endian -frecord-marker=4 -static-libgfortran -lgfortran -lgcc -static-libgcc 
 F90FLAGSINTEL = -free -w -c -O2 -fconvert=big-endian -frecord-marker=4
