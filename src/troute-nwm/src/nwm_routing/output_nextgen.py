@@ -42,19 +42,19 @@ class OutputWriter:
       - lake_id     : reservoir outputs (inflow, outflow, water_sfc_elev)
     """
     
-    def __init__(self, cfg: Dict, all_network_ids: np.ndarray,
+    def __init__(self, cfg: Dict, output_cfg: Dict, all_network_ids: np.ndarray,
                  total_sim_seconds: float, start_time: datetime, dt: float,
-                 rconn: Dict[int, List[int]],
+                 rconn: Dict[int, List[int]], q0: pd.DataFrame,
                  waterbody_df: Optional[pd.DataFrame] = None,
-                 waterbody_types_df: Optional[pd.DataFrame] = None):
+                 waterbody_types_df: Optional[pd.DataFrame] = None,):
         
-        self._cfg = cfg
+        self._output_cfg = output_cfg
         self._dt = float(dt)
         self._start_time = start_time
-        self._output_interval = cfg['output_interval']
-        self._total_steps = int(total_sim_seconds // self._output_interval)
-        self._stream_vars = cfg['variables']['stream']
-        self._reservoir_vars = cfg['variables']['reservoir']
+        self._output_interval = output_cfg['output_interval']
+        self._total_steps = int(total_sim_seconds // self._output_interval) + 1
+        self._stream_vars = output_cfg['variables']['stream']
+        self._reservoir_vars = output_cfg['variables']['reservoir']
         
         # Reservoir domain (excluded from flowpaths)
         reservoir_ids: Set[int] = (set(waterbody_df.index.tolist()) if waterbody_df is not None else set())
@@ -90,15 +90,50 @@ class OutputWriter:
         self._need_nex_flow = bool(self._nex_upstream_ids) and 'streamflow' in self._stream_vars
         
         # Open and pre-allocate NetCDF
-        self._nc = self._create_netcdf(cfg['output_path'], start_time)
+        self._nc = self._create_netcdf(output_cfg['output_path'], start_time, cfg)
+        
+        # Write initial conditions to file
+        self._write_initial_conditions(q0)
         
         LOG.info(
             "OutputWriter ready: %s  "
             "(%d flowpath, %d nexus, %d reservoir, %d timesteps)",
-            cfg['output_path'], num_ids, len(self._nex_ids),
+            output_cfg['output_path'], num_ids, len(self._nex_ids),
             len(self._lake_ids), self._total_steps,
         )
+    
+    # ------------------------------------------------------------------
+    # Write initial conditions
+    # ------------------------------------------------------------------
+    def _write_initial_conditions(self, q0: pd.DataFrame):
+        """Extracts t=0 state from q0 and writes to the first NetCDF index."""
+        self._nc.variables['time'][0] = 0 # 0 minutes elapsed
         
+        # Flowpaths
+        if len(self._wb_ids):
+            # Intersect q0 with valid flowpaths
+            valid_fps = q0.index.intersection(self._wb_ids)
+            q0_fp = q0.loc[valid_fps]
+            
+            # Map q0 columns to netcdf variables (qu0 -> streamflow, qd0 -> velocity, h0 -> depth)
+            if 'streamflow' in self._stream_vars and 'qu0' in q0_fp.columns:
+                flow_buf = np.full(len(self._wb_ids), np.nan, dtype=np.float32)
+                pos = [self._wb_id_to_pos[fid] for fid in valid_fps]
+                flow_buf[pos] = q0_fp['qu0'].values
+                self._nc.variables['streamflow'][0, :] = flow_buf
+            
+            if 'velocity' in self._stream_vars and 'qd0' in q0_fp.columns:
+                flow_buf = np.full(len(self._wb_ids), np.nan, dtype=np.float32)
+                pos = [self._wb_id_to_pos[fid] for fid in valid_fps]
+                flow_buf[pos] = q0_fp['qd0'].values
+                self._nc.variables['velocity'][0, :] = flow_buf
+                
+            if 'depth' in self._stream_vars and 'h0' in q0_fp.columns:
+                depth_buf = np.full(len(self._wb_ids), np.nan, dtype=np.float32)
+                pos = [self._wb_id_to_pos[fid] for fid in valid_fps]
+                depth_buf[pos] = q0_fp['h0'].values
+                self._nc.variables['depth'][0, :] = depth_buf
+    
     # ------------------------------------------------------------------
     # Index builders
     # ------------------------------------------------------------------
@@ -164,7 +199,7 @@ class OutputWriter:
         Returns None if no subset file is configured or the key is absent.
         TODO: Add reservoir filtering too?
         """
-        subset_file = self._cfg.get('subset_file')
+        subset_file = self._output_cfg.get('subset_file')
         if not subset_file:
             return None
         with open(subset_file) as fh:
@@ -175,7 +210,7 @@ class OutputWriter:
     # ------------------------------------------------------------------
     # NetCDF creation
     # ------------------------------------------------------------------
-    def _create_netcdf(self, output_path: str, start_time: datetime) -> nc.Dataset:
+    def _create_netcdf(self, output_path: str, start_time: datetime, full_config: Optional[Dict] = None) -> nc.Dataset:
         """
         Create and pre-allocate the output NetCDF file.
         
@@ -249,6 +284,10 @@ class OutputWriter:
                 v.long_name = long_name
                 
         ds.Conventions = 'CF-1.8'
+        
+        if full_config:
+            ds.model_configuration = yaml.dump(full_config, default_flow_style=False)
+        
         return ds
 
     # ------------------------------------------------------------------
@@ -275,7 +314,7 @@ class OutputWriter:
             step_time = current_chunk_start_time + timedelta(seconds=i * self._dt)
             elapsed   = (step_time - self._start_time).total_seconds()
             if abs(elapsed % self._output_interval) < 0.1:
-                nc_idx = int(round(elapsed / self._output_interval)) - 1
+                nc_idx = int(round(elapsed / self._output_interval))
                 if 0 <= nc_idx < self._total_steps:
                     output_steps.append((i - 1, nc_idx, step_time))
 
