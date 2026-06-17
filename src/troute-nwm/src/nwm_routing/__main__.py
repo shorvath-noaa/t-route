@@ -54,6 +54,7 @@ def main_v04(argv):
         output_parameters,
         parity_parameters,
         data_assimilation_parameters,
+        config_dict,
     ) = _input_handler_v04(args)
     
     run_parameters = {
@@ -148,12 +149,14 @@ def main_v04(argv):
     output_writer = None
     if netcdf_output and netcdf_output.get('output_path', None):
         output_writer = OutputWriter(
-            cfg = netcdf_output,
-            all_network_ids = network.dataframe.index.to_numpy(),
+            cfg = config_dict,
+            output_cfg = netcdf_output,
+            all_network_ids = network.segment_index.to_numpy(),
             total_sim_seconds = run_parameters['dt'] * run_parameters['nts'],
             start_time = network.t0,
             dt = run_parameters['dt'],
             rconn = network.reverse_network,
+            q0 = network.q0,
             waterbody_df = network.waterbody_dataframe,
             waterbody_types_df = network.waterbody_types_dataframe,
         )
