@@ -106,13 +106,13 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     
     flowline_area_ratio = pd.DataFrame()
     if "line" in flow_type:
-        fp_connections = gpd.read_file(file_path, layer="flowpaths")[['flowpath_id','flowpath_toid']]
-        flowpaths_df = pd.merge(
-            flowpaths_df, 
-            fp_connections, 
-            on='flowpath_id', 
-            how='inner',
-        )
+        # fp_connections = gpd.read_file(file_path, layer="flowpaths")[['flowpath_id','flowpath_toid']]
+        # flowpaths_df = pd.merge(
+        #     flowpaths_df, 
+        #     fp_connections, 
+        #     on='flowpath_id', 
+        #     how='inner',
+        # )
         
         flowpaths_df['area_ratio'] = (
             flowpaths_df['incremental_areasqkm'] / 
@@ -121,6 +121,9 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
         flowline_area_ratio = flowpaths_df[['flowline_id','flowpath_toid','area_ratio']].drop_duplicates()
         flowline_area_ratio['flowpath_toid'] = flowline_area_ratio['flowpath_toid'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
         flowline_area_ratio['flowline_id'] = flowline_area_ratio['flowline_id'].astype(int)
+        
+        # 'ids' in the 'flowline_attribtues' table are strings, so convert them to integers
+        flowpath_attributes_df['flowline_id'] = flowpath_attributes_df['flowline_id'].astype(float).astype(int)
     
     cols = supernetwork_parameters.get('columns', None)
     if cols:
@@ -128,17 +131,19 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
         flowpaths_df = flowpaths_df[fp_col_idx]
         fp_attr_col_idx = list(set(cols.values()).intersection(set(flowpath_attributes_df.columns)))
         flowpath_attributes_df = flowpath_attributes_df[fp_attr_col_idx]
-
-    # Merge flowpaths and flowpath_attributes 
-    # Get 'id' variable name based on configuration file:
-    id_var = supernetwork_parameters.get('columns').get('key')
+    
+    # Merge flowpaths and flowpath_attributes
     flowpaths = pd.merge(
         flowpaths_df, 
         flowpath_attributes_df, 
-        on=id_var, 
+        on=flow_type, 
         how='inner',
         suffixes=("", "_flowpath_attributes"),
     )
+    
+    if "line" not in flow_type:
+        # Replace any 'tnx-*' entries with 'tnx-0' to ensure terminal code masking works later.
+        flowpaths['flowpath_toid'] = flowpaths['flowpath_toid'].str.replace(r'^tnx-\d+', 'tnx-0', regex=True)
     flowpaths = flowpaths.rename(columns=reverse_dict(cols))
     
     # Drop str prefixes from flowpath segment IDs. Make flowpaths/flowlines integers
@@ -153,20 +158,20 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     network = table_dict.get('network', pd.DataFrame())
     nexus = table_dict.get('nexus', pd.DataFrame())
     
-    if not lakes.empty:
-        #NOTE: Temporary (probably) solution, we get the flowpath/flowline to waterbody ID crosswalk from
-        # the network table (hf_v3 beta version). 
-        flowpaths = pd.merge(
-            flowpaths, 
-            network[[id_var, 'lake_id']].dropna().drop_duplicates().rename(columns={'lake_id': 'waterbody'}), 
-            left_on='key', 
-            right_on=id_var,
-            how='left',
-        ).drop(id_var, axis=1)
+    # if not lakes.empty:
+    #     #NOTE: Temporary (probably) solution, we get the flowpath/flowline to waterbody ID crosswalk from
+    #     # the network table (hf_v3 beta version). 
+    #     flowpaths = pd.merge(
+    #         flowpaths, 
+    #         network[[flow_type, 'lake_id']].dropna().drop_duplicates().rename(columns={'lake_id': 'waterbody'}), 
+    #         left_on='key', 
+    #         right_on=flow_type,
+    #         how='left',
+    #     ).drop(flow_type, axis=1)
     
     if not da:
         network = pd.DataFrame()
-        
+    
     return flowpaths, lakes, network, nexus, flowline_area_ratio
 
 def read_json(file_path, edge_list):
@@ -520,12 +525,13 @@ class HYFeaturesNetwork(AbstractNetwork):
     def crosswalk_nex_flowpath_poi(self, flowpaths, nexus):
         self._poi_nex_dict = None
         self._nexus_dict = None
-        if not flowpaths.empty and not nexus.empty:
-            mask_flowpaths = flowpaths['downstream'].str.startswith(('nex-', 'tnex-'))
-            filtered_flowpaths = flowpaths[mask_flowpaths]
-            self._nexus_dict = filtered_flowpaths.groupby('downstream')['key'].apply(list).to_dict()  ##{id: toid}
-            if 'poi_id' in nexus.columns:
-                self._poi_nex_dict = nexus.groupby('poi_id')['key'].apply(list).to_dict()
+        # TODO: Revisit this block, do we still need it? -shorvath, June 23 2026
+        # if not flowpaths.empty and not nexus.empty:
+        #     mask_flowpaths = flowpaths['downstream'].str.startswith(('nex-', 'tnex-'))
+        #     filtered_flowpaths = flowpaths[mask_flowpaths]
+        #     self._nexus_dict = filtered_flowpaths.groupby('downstream')['key'].apply(list).to_dict()  ##{id: toid}
+        #     if 'poi_id' in nexus.columns:
+        #         self._poi_nex_dict = nexus.groupby('poi_id')['key'].apply(list).to_dict()
 
     def preprocess_waterbodies(self, lakes, nexus):
         # If waterbodies are being simulated, create waterbody dataframes and dictionaries
