@@ -119,7 +119,7 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
             flowpaths_df.groupby('flowpath_toid')['incremental_areasqkm'].transform('sum')
             )
         flowline_area_ratio = flowpaths_df[['flowline_id','flowpath_toid','area_ratio']].drop_duplicates()
-        flowline_area_ratio['flowpath_toid'] = flowline_area_ratio['flowpath_toid'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
+        # flowline_area_ratio['flowpath_toid'] = flowline_area_ratio['flowpath_toid'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
         flowline_area_ratio['flowline_id'] = flowline_area_ratio['flowline_id'].astype(int)
         
         # 'ids' in the 'flowline_attribtues' table are strings, so convert them to integers
@@ -819,14 +819,14 @@ class HYFeaturesNetwork(AbstractNetwork):
                         right_on='flowpath_toid',
                         how='inner'
                     )
-
+                    
                     merged_nexuses_lateralflows_df[time_cols] = merged_nexuses_lateralflows_df[time_cols].multiply(merged_nexuses_lateralflows_df['area_ratio'], axis=0)
                     nexuses_lateralflows_df = merged_nexuses_lateralflows_df.set_index('flowline_id')[time_cols]
                     
                     # We are assuming all lateral flow actually enters the system at the entry to the segment directly
                     # downstream, so we adjust the index values here.
                     qlats_df = nexuses_lateralflows_df.rename(index=self.downstream_flowpath_dict)
-                    # Then beccause a segment can have multiple segments direclty upstream, we need to add those together.
+                    # Then because a segment can have multiple segments direclty upstream, we need to add those together.
                     qlats_df = qlats_df.groupby(level=0).sum()
                     
                 else:
@@ -835,8 +835,11 @@ class HYFeaturesNetwork(AbstractNetwork):
                     
                     # Because nexus points share an integer value with the immediate downstream flowpath,
                     # we don't need to do a nexus-to-flowpath transfer if we want nexus q_lateral to enter the
-                    # network at the downstream flowpath
-                    qlats_df = nexuses_lateralflows_df
+                    # network at the downstream flowpath.
+                    
+                    # However, we do need to drop the 'tnx-' point and drop the 'nex-' prefixes.
+                    qlats_df = nexuses_lateralflows_df[~nexuses_lateralflows_df.index.astype(str).str.startswith('tnx-')]
+                    qlats_df.index = qlats_df.index.astype(str).str.replace(r'^[a-zA-Z-]+', '', regex=True).astype(int)
                 
                 qlats_df = qlats_df[qlats_df.index.isin(self.segment_index)]
                 
@@ -858,11 +861,19 @@ class HYFeaturesNetwork(AbstractNetwork):
                 
                 dfs=[]
                 
+                qlat_file_pattern_filter = self.forcing_parameters.get("qlat_file_pattern_filter", None)
+                if qlat_file_pattern_filter=="*.NHDOUT.csv":
+                    for f in qlat_files:
+                        df = pd.read_csv(f)
+                        df = df.set_index('feature_id')
+                        dfs.append(df)
+                    
+                    qlats_df = pd.concat(dfs, axis=1) 
+                    qlats_df = qlats_df[qlats_df.index.isin(self.segment_index)]
                 #FIXME Temporary solution to allow t-route to use ngen nex-* output files as forcing files
                 # This capability should be here, but we need to think through how to handle all of this 
                 # data in memory for large domains and many timesteps... - shorvath, Feb 28, 2024
-                qlat_file_pattern_filter = self.forcing_parameters.get("qlat_file_pattern_filter", None)
-                if qlat_file_pattern_filter=="nex-*":
+                elif qlat_file_pattern_filter=="nex-*":
                     for f in qlat_files:
                         df = pd.read_csv(f, names=['timestamp', 'qlat'], index_col=[0])
                         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y%m%d%H%M')
