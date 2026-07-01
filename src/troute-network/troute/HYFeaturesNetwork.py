@@ -733,9 +733,13 @@ class HYFeaturesNetwork(AbstractNetwork):
                 qlat_df = ds_slice['runoff_rate'].transpose("feature_id", "time").to_pandas()
                 qlat_df.columns = qlat_df.columns.strftime('%Y%m%d%H%M')
                 
-                # Take flowpath ids entering NEXUS and replace NEXUS ids by the upstream flowpath ids
-                qlats_df = qlat_df.rename(index=self.downstream_flowpath_dict)
-                qlats_df = qlats_df[qlats_df.index.isin(self.segment_index)]
+                # Drop 'tnx-' rows if present, and drop 'nex-' prefixes if present.
+                # NOTE: this drops terminal nexus points. Should t-route handle this differently (accumulate at tnx points)?
+                if pd.api.types.is_string_dtype(qlat_df.index):
+                    qlat_df = qlat_df[~qlat_df.index.astype(str).str.startswith('tnx-')]
+                    qlat_df.index = qlat_df.index.astype(str).str.replace(r'^[a-zA-Z-]+', '', regex=True).astype(int)
+                # qlats_df = qlat_df.rename(index=self.downstream_flowpath_dict)
+                qlats_df = qlat_df[qlat_df.index.isin(self.segment_index)]
                 
                 all_df = pd.DataFrame( np.zeros( (len(self.segment_index), len(qlats_df.columns)) ), index=self.segment_index,
                     columns=qlats_df.columns )
