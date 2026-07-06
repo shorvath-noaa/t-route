@@ -141,6 +141,7 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
         suffixes=("", "_flowpath_attributes"),
     )
     
+    tnx_upstream_connections = flowpaths[flowpaths['flowpath_toid'].str.startswith("tnx")]
     if "line" not in flow_type:
         # Replace any 'tnx-*' entries with 'tnx-0' to ensure terminal code masking works later.
         flowpaths['flowpath_toid'] = flowpaths['flowpath_toid'].str.replace(r'^tnx-\d+', 'tnx-0', regex=True)
@@ -172,7 +173,7 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     if not da:
         network = pd.DataFrame()
     
-    return flowpaths, lakes, network, nexus, flowline_area_ratio
+    return flowpaths, lakes, network, nexus, flowline_area_ratio, tnx_upstream_connections
 
 def read_json(file_path, edge_list):
     dfs = []
@@ -264,7 +265,7 @@ def read_geo_file(supernetwork_parameters, waterbody_parameters, compute_paramet
     
     file_type = Path(geo_file_path).suffix
     if(file_type=='.gpkg'):        
-        flowpaths, lakes, network, nexus, flowline_area_ratio = read_geopkg(
+        flowpaths, lakes, network, nexus, flowline_area_ratio, tnx_upstream_connections = read_geopkg(
             geo_file_path,
             compute_parameters,
             waterbody_parameters,
@@ -278,7 +279,7 @@ def read_geo_file(supernetwork_parameters, waterbody_parameters, compute_paramet
     else:
         raise RuntimeError("Unsupported file type: {}".format(file_type))
     
-    return flowpaths, lakes, network, nexus, flowline_area_ratio
+    return flowpaths, lakes, network, nexus, flowline_area_ratio, tnx_upstream_connections
 
 def load_bmi_data(value_dict, bmi_parameters,): 
     # Get the column names that we need from each table of the geopackage
@@ -317,7 +318,8 @@ class HYFeaturesNetwork(AbstractNetwork):
     
     """
     __slots__ = ["_upstream_terminal", "_nexus_latlon", "_duplicate_ids_df", "_ds", "_flowline_area_ratio",
-                 "_upstream_flowpath_dict", "_downstream_flowpath_dict", "_compute_node_crosswalk_df"]
+                 "_upstream_flowpath_dict", "_downstream_flowpath_dict", "_compute_node_crosswalk_df",
+                 "_tnx_upstream_connections"]
 
     def __init__(self, 
                  supernetwork_parameters, 
@@ -369,7 +371,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             if not from_files_copy:
                 from_files=True
             if from_files:
-                flowpaths, lakes, network, nexus, flowline_area_ratio = read_geo_file(
+                flowpaths, lakes, network, nexus, flowline_area_ratio, tnx_upstream_connections = read_geo_file(
                     self.supernetwork_parameters,
                     self.waterbody_parameters,
                     self.compute_parameters,
@@ -384,7 +386,10 @@ class HYFeaturesNetwork(AbstractNetwork):
             #FIXME: See FIXME above.
             if not from_files_copy:
                 from_files=False
-
+            
+            # Record terminal nexus upstream connections for distributng qlat later
+            self._tnx_upstream_connections = tnx_upstream_connections
+            
             # Preprocess network objects
             self.preprocess_network(flowpaths, nexus)
             
@@ -879,13 +884,42 @@ class HYFeaturesNetwork(AbstractNetwork):
                         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y%m%d%H%M')
                         df = df.set_index('timestamp')
                         df = df.T
-                        df.index = [int(os.path.basename(f).split('-')[1].split('_')[0])]
+                        # df.index = [int(os.path.basename(f).split('-')[1].split('_')[0])]
+                        df.index = [os.path.basename(f).split('_')[0]]
                         df = df.rename_axis(None, axis=1)
                         df.index.name = 'feature_id'
                         dfs.append(df)
                     
                     # lateral flows [m^3/s] are stored at NEXUS points with NEXUS ids
                     nexuses_lateralflows_df = pd.concat(dfs, axis=0) 
+                    
+                    # add terminal nexus values to the next upstream nexus point
+                    upstream_tnx_connections = self._tnx_upstream_connections.iloc[:,0:2].copy()
+                    upstream_tnx_connections['dest_id'] = upstream_tnx_connections.iloc[:,0].str.replace('fp-', 'nex-')
+
+                    # Ensure the source 'tnx-' IDs actually exist in the dataframe
+                    valid_conns = upstream_tnx_connections[upstream_tnx_connections.iloc[:,2].isin(nexuses_lateralflows_df.index)]
+
+                    # Extract the 'tnx-' rows that need to be added
+                    additions = nexuses_lateralflows_df.loc[valid_conns.iloc[:,1]].copy()
+
+                    # Swap the index of these extracted rows to their new destination 'nex-' IDs
+                    additions.index = valid_conns['dest_id']
+
+                    # Group by the new index and sum
+                    additions = additions.groupby(level=0).sum()
+
+                    # Filter additions to ensure the destination 'nex-' ID exists in the flows dataframe
+                    additions = additions[additions.index.isin(nexuses_lateralflows_df.index)]
+
+                    # Add the values in-place
+                    nexuses_lateralflows_df.loc[additions.index] += additions
+                    
+                    # Drop the tnx- rows now
+                    qlats_df = nexuses_lateralflows_df[~nexuses_lateralflows_df.index.str.startswith('tnx-')]
+                    
+                    # Drop "nex-" prefixes and convert to integer
+                    qlats_df.index = qlats_df.index.str.replace('nex-', '').astype(int)
                 else:
                     for f in qlat_files:
                         df = read_file(f)
@@ -899,7 +933,7 @@ class HYFeaturesNetwork(AbstractNetwork):
                     nexuses_lateralflows_df = pd.concat(dfs, axis=1) 
                 
                 # Take flowpath ids entering nexus and replace nexus ids by the upstream flowpath ids
-                qlats_df = nexuses_lateralflows_df.rename(index=self.downstream_flowpath_dict)
+                # qlats_df = nexuses_lateralflows_df.rename(index=self.downstream_flowpath_dict)
                 qlats_df = qlats_df[qlats_df.index.isin(self.segment_index)]
                 
                 '''

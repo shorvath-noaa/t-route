@@ -12,6 +12,7 @@ import logging
 import pyarrow as pa
 import pyarrow.parquet as pq
 import xarray as xr
+from itertools import chain
 
 from troute.nhd_network import extract_connections, replace_waterbodies_connections, reverse_network, reachable_network, split_at_waterbodies_and_junctions, split_at_junction, dfs_decomposition
 from troute.nhd_network_utilities_v02 import organize_independent_networks
@@ -809,7 +810,8 @@ class AbstractNetwork(ABC):
                 forcing_parameters["qlat_file_pattern_filter"] = forcing_glob_filter
 
             else:
-                all_files = sorted(qlat_input_folder.glob(forcing_glob_filter))
+                patterns = ("nex-*", "tnx-*")
+                all_files = sorted(chain.from_iterable(qlat_input_folder.glob(p) for p in patterns))
                 final_timestamp = pd.read_csv(all_files[0], header=None, index_col=[0]).tail(1).iloc[0,0]
                 final_timestamp = datetime.strptime(final_timestamp.strip(), "%Y-%m-%d %H:%M:%S")
                 
