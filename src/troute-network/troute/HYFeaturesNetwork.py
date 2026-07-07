@@ -141,8 +141,15 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
         suffixes=("", "_flowpath_attributes"),
     )
     
-    tnx_upstream_connections = flowpaths[flowpaths['flowpath_toid'].str.startswith("tnx")]
+    tnx_upstream_connections = pd.DataFrame()
+    
     if "line" not in flow_type:
+        tnx_upstream_connections = (
+            flowpaths[flowpaths['flowpath_toid']
+                      .str.startswith("tnx")][['flowpath_id', 'flowpath_toid']]
+            .rename(columns={'flowpath_id': 'id', 'flowpath_toid': 'toid'})
+        )
+        
         # Replace any 'tnx-*' entries with 'tnx-0' to ensure terminal code masking works later.
         flowpaths['flowpath_toid'] = flowpaths['flowpath_toid'].str.replace(r'^tnx-\d+', 'tnx-0', regex=True)
     flowpaths = flowpaths.rename(columns=reverse_dict(cols))
@@ -894,14 +901,14 @@ class HYFeaturesNetwork(AbstractNetwork):
                     nexuses_lateralflows_df = pd.concat(dfs, axis=0) 
                     
                     # add terminal nexus values to the next upstream nexus point
-                    upstream_tnx_connections = self._tnx_upstream_connections.iloc[:,0:2].copy()
-                    upstream_tnx_connections['dest_id'] = upstream_tnx_connections.iloc[:,0].str.replace('fp-', 'nex-')
+                    upstream_tnx_connections = self._tnx_upstream_connections.copy()
+                    upstream_tnx_connections['dest_id'] = upstream_tnx_connections['id'].str.replace('fp-', 'nex-')
 
                     # Ensure the source 'tnx-' IDs actually exist in the dataframe
-                    valid_conns = upstream_tnx_connections[upstream_tnx_connections.iloc[:,2].isin(nexuses_lateralflows_df.index)]
+                    valid_conns = upstream_tnx_connections[upstream_tnx_connections['toid'].isin(nexuses_lateralflows_df.index)]
 
                     # Extract the 'tnx-' rows that need to be added
-                    additions = nexuses_lateralflows_df.loc[valid_conns.iloc[:,1]].copy()
+                    additions = nexuses_lateralflows_df.loc[valid_conns['toid']].copy()
 
                     # Swap the index of these extracted rows to their new destination 'nex-' IDs
                     additions.index = valid_conns['dest_id']
