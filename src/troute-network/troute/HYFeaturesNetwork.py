@@ -916,15 +916,12 @@ class HYFeaturesNetwork(AbstractNetwork):
                     # Group by the new index and sum
                     additions = additions.groupby(level=0).sum()
 
-                    # Filter additions to ensure the destination 'nex-' ID exists in the flows dataframe
-                    additions = additions[additions.index.isin(nexuses_lateralflows_df.index)]
+                    # Add additions to the main df, creating new 'nex-' rows if they don't already exist
+                    nexuses_lateralflows_df = nexuses_lateralflows_df.add(additions, fill_value=0)
 
-                    # Add the values in-place
-                    nexuses_lateralflows_df.loc[additions.index] += additions
-                    
                     # Drop the tnx- rows now
-                    qlats_df = nexuses_lateralflows_df[~nexuses_lateralflows_df.index.str.startswith('tnx-')]
-                    
+                    qlats_df = nexuses_lateralflows_df[~nexuses_lateralflows_df.index.str.startswith('tnx-')].copy()
+
                     # Drop "nex-" prefixes and convert to integer
                     qlats_df.index = qlats_df.index.str.replace('nex-', '').astype(int)
                 else:
