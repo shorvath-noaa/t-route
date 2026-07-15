@@ -687,9 +687,16 @@ class AbstractNetwork(ABC):
         # if lite restart file is provided, the read channel initial states from it
         if from_files:
             if restart_parameters.get("lite_channel_restart_file", None):
-                self._q0, self._t0 = nhd_io.read_lite_restart(
-                    restart_parameters['lite_channel_restart_file']
-                )
+                restart_file_type = restart_parameters['lite_channel_restart_file'].suffix
+                if restart_file_type==".parquet":
+                    restart_df = pd.read_parquet(pathlib.Path(restart_parameters['lite_channel_restart_file']))
+                    # extract restart time as datetime object
+                    self._t0 = restart_parameters.get("start_datetime")
+                    self._q0 = restart_df.drop(columns = 'time')
+                else:
+                    self._q0, self._t0 = nhd_io.read_lite_restart(
+                        restart_parameters['lite_channel_restart_file']
+                    )
             
             elif restart_parameters.get("wrf_hydro_channel_restart_file", None):
                 self._q0 = nhd_io.get_channel_restart_from_wrf_hydro(
