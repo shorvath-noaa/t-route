@@ -918,7 +918,11 @@ class HYFeaturesNetwork(AbstractNetwork):
             'gages': self._gages,
             'usgs_lake_gage_crosswalk': self._usgs_lake_gage_crosswalk,
             'usace_lake_gage_crosswalk': self._usace_lake_gage_crosswalk,
-            'rfc_lake_gage_crosswalk': self._rfc_lake_gage_crosswalk
+            'rfc_lake_gage_crosswalk': self._rfc_lake_gage_crosswalk,
+            'duplicate_ids_ds': self._duplicate_ids_df,
+            'gl_climatology_df': self._gl_climatology_df,
+            'poi_nex_dict': self._poi_nex_dict,
+            'nexus_dict': self._nexus_dict
         }
         np.save(
             Path(destination_folder).joinpath(output_filename),
@@ -948,6 +952,10 @@ class HYFeaturesNetwork(AbstractNetwork):
             self._usgs_lake_gage_crosswalk = inputs.get('usgs_lake_gage_crosswalk',None)
             self._usace_lake_gage_crosswalk = inputs.get('usace_lake_gage_crosswalk',None)
             self._rfc_lake_gage_crosswalk = inputs.get('rfc_lake_gage_crosswalk',None)
+            self._duplicate_ids_df = inputs.get('duplicate_ids_df',None)
+            self._gl_climatology_df = inputs.get('gl_climatology_df',None)
+            self._poi_nex_dict = inputs.get('poi_nex_dict',None)
+            self._nexus_dict = inputs.get('nexus_dict',None)
 
 
 def read_file(file_name):
