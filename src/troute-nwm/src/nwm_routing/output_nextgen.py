@@ -37,7 +37,7 @@ class OutputWriter:
     Writes t-route model output to a single pre-allocated NetCDF file.
     
     Handles three feature types in the same file under separate dimensions:
-      - flowpath_id : individual reach outputs (streamflow, velocity, depth, nudge)
+      - feature_id  : individual reach outputs (streamflow, velocity, depth, nudge)
       - nexus_id    : nexus aggregation points (streamflow, nudge only — additive)
       - lake_id     : reservoir outputs (inflow, outflow, water_sfc_elev)
     """
@@ -218,7 +218,7 @@ class OutputWriter:
         here before the simulation loop begins, so each write_step call only
         needs to fill pre-existing variable slices rather than modify file
         structure.  The three feature types share the same file but use
-        separate dimensions (flowpath_id, nexus_id, lake_id).
+        separate dimensions (feature_id, nexus_id, lake_id).
         """
         ds = nc.Dataset(output_path, 'w', format='NETCDF4')
         
@@ -227,7 +227,7 @@ class OutputWriter:
         
         # ID dimensions
         if len(self._wb_ids):
-            ds.createDimension('flowpath_id', len(self._wb_ids))
+            ds.createDimension('feature_id', len(self._wb_ids))
         if len(self._nex_ids):
             ds.createDimension('nexus_id', len(self._nex_ids))
         if len(self._lake_ids):
@@ -241,7 +241,7 @@ class OutputWriter:
         
         # coordinate variables
         if len(self._wb_ids):
-            v = ds.createVariable('flowpath_id', 'i4', ('flowpath_id',))
+            v = ds.createVariable('feature_id', 'i4', ('feature_id',))
             v.long_name = 'Flowpath integer ID'
             v[:] = self._wb_ids.astype(np.int32)
             
@@ -261,7 +261,7 @@ class OutputWriter:
         if len(self._wb_ids):
             for var in self._stream_vars:
                 units, long_name = _VAR_ATTRS.get(var, ('', var))
-                v = ds.createVariable(var, 'f4', ('time', 'flowpath_id'),
+                v = ds.createVariable(var, 'f4', ('time', 'feature_id'),
                                       chunksizes=(1, len(self._wb_ids)), **comp)
                 v.units = units
                 v.long_name = long_name
@@ -433,7 +433,7 @@ class OutputWriter:
         Write one timestep of flowpath output to the NetCDF file.
         
         flow, vel, and depth are pre-allocated numpy arrays already indexed
-        to the flowpath output domain (length = n_flowpath_ids), filled by
+        to the flowpath output domain (length = n_feature_ids), filled by
         _extract_and_write. nudge is handled separately because it is sparse
         so it is passed as a dict and scattered into a NaN buffer here.
         """
