@@ -919,7 +919,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             'usgs_lake_gage_crosswalk': self._usgs_lake_gage_crosswalk,
             'usace_lake_gage_crosswalk': self._usace_lake_gage_crosswalk,
             'rfc_lake_gage_crosswalk': self._rfc_lake_gage_crosswalk,
-            'duplicate_ids_ds': self._duplicate_ids_df,
+            'duplicate_ids_df': self._duplicate_ids_df,
             'gl_climatology_df': self._gl_climatology_df,
             'poi_nex_dict': self._poi_nex_dict,
             'nexus_dict': self._nexus_dict
