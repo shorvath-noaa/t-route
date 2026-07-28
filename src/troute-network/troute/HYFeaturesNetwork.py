@@ -106,24 +106,66 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     
     flowline_area_ratio = pd.DataFrame()
     if "line" in flow_type:
-        # fp_connections = gpd.read_file(file_path, layer="flowpaths")[['flowpath_id','flowpath_toid']]
-        # flowpaths_df = pd.merge(
-        #     flowpaths_df, 
-        #     fp_connections, 
-        #     on='flowpath_id', 
-        #     how='inner',
-        # )
+        # Change any "non-routed" flowlines to "routed" flowlines if that have "routed" flowlines upstream of them.
+        flowpaths_df = promote_connecting_flowlines(flowpaths_df, id_col="flowline_id",toid_col="flowline_toid",flag_col="is_coincident")
         
         flowpaths_df['area_ratio'] = (
             flowpaths_df['incremental_areasqkm'] / 
             flowpaths_df.groupby('flowpath_toid')['incremental_areasqkm'].transform('sum')
             )
-        flowline_area_ratio = flowpaths_df[['flowline_id','flowpath_toid','area_ratio']].drop_duplicates()
+        flowline_area_ratio = flowpaths_df[['flowline_id','flowpath_toid','area_ratio', 'is_coincident']].drop_duplicates()
         # flowline_area_ratio['flowpath_toid'] = flowline_area_ratio['flowpath_toid'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
         flowline_area_ratio['flowline_id'] = flowline_area_ratio['flowline_id'].astype(int)
         
+        # Create distribute_to column where to distribute nexus flows to. Upstream for routable
+        # segments, downstream for non-routable segments.
+        topology = dict(zip(flowpaths_df['flowline_id'], flowpaths_df['flowline_toid']))
+        coincident_set = set(flowline_area_ratio.loc[flowline_area_ratio['is_coincident'], 'flowline_id'])
+        distribute_map = {fid: fid for fid in coincident_set}
+
+        def find_distribute_target(start_fid):
+            """Traces downstream to find the next coincident flowline, caching results."""
+            path = []
+            curr = start_fid
+            
+            while curr is not None and curr not in distribute_map:
+                if curr in path:
+                    # Cycle detected; break to prevent infinite loop
+                    curr = None 
+                    break
+                
+                path.append(curr)
+                curr = topology.get(curr)
+                
+                # Stop condition: terminal outlets (0 or >1e9) and missing data
+                if pd.isna(curr) or curr == 0 or curr > 1e9:
+                    curr = None
+                    break
+
+            target = distribute_map.get(curr, curr)
+            for p in path:
+                distribute_map[p] = target
+                
+            return target
+
+        flowline_area_ratio['distribute_to'] = [
+            find_distribute_target(fid) for fid in flowline_area_ratio['flowline_id']
+        ]
+        
         # 'ids' in the 'flowline_attribtues' table are strings, so convert them to integers
         flowpath_attributes_df['flowline_id'] = flowpath_attributes_df['flowline_id'].astype(float).astype(int)
+        
+        # Drop the non-routable segment IDs from our flowpath/flowpath_attributes dataframes
+        flowpaths_df = flowpaths_df[flowpaths_df['is_coincident']]
+        flowpath_attributes_df = flowpath_attributes_df[flowpath_attributes_df[flow_type].isin(flowpaths_df[flow_type])]
+    
+    tnx_upstream_connections = (
+        flowpaths_df[flowpaths_df['flowpath_toid']
+                    .str.startswith("tnx")][['flowpath_id', 'flowpath_toid']]
+        .rename(columns={'flowpath_id': 'id', 'flowpath_toid': 'toid'})
+    )
+    # Replace any 'tnx-*' entries with 'tnx-0' to ensure terminal code masking works later.
+    flowpaths_df['flowpath_toid'] = flowpaths_df['flowpath_toid'].str.replace(r'^tnx-\d+', 'tnx-0', regex=True)
     
     cols = supernetwork_parameters.get('columns', None)
     if cols:
@@ -141,17 +183,6 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
         suffixes=("", "_flowpath_attributes"),
     )
     
-    tnx_upstream_connections = pd.DataFrame()
-    
-    if "line" not in flow_type:
-        tnx_upstream_connections = (
-            flowpaths[flowpaths['flowpath_toid']
-                      .str.startswith("tnx")][['flowpath_id', 'flowpath_toid']]
-            .rename(columns={'flowpath_id': 'id', 'flowpath_toid': 'toid'})
-        )
-        
-        # Replace any 'tnx-*' entries with 'tnx-0' to ensure terminal code masking works later.
-        flowpaths['flowpath_toid'] = flowpaths['flowpath_toid'].str.replace(r'^tnx-\d+', 'tnx-0', regex=True)
     flowpaths = flowpaths.rename(columns=reverse_dict(cols))
     
     # Drop str prefixes from flowpath segment IDs. Make flowpaths/flowlines integers
@@ -833,14 +864,10 @@ class HYFeaturesNetwork(AbstractNetwork):
                     )
                     
                     merged_nexuses_lateralflows_df[time_cols] = merged_nexuses_lateralflows_df[time_cols].multiply(merged_nexuses_lateralflows_df['area_ratio'], axis=0)
-                    nexuses_lateralflows_df = merged_nexuses_lateralflows_df.set_index('flowline_id')[time_cols]
+                    nexuses_lateralflows_df = merged_nexuses_lateralflows_df.set_index('distribute_to')[time_cols]
+                    nexuses_lateralflows_df.index.name = 'feature_id'
                     
-                    # We are assuming all lateral flow actually enters the system at the entry to the segment directly
-                    # downstream, so we adjust the index values here.
-                    qlats_df = nexuses_lateralflows_df.rename(index=self.downstream_flowpath_dict)
-                    # Then because a segment can have multiple segments direclty upstream, we need to add those together.
-                    qlats_df = qlats_df.groupby(level=0).sum()
-                    
+                    qlats_df = nexuses_lateralflows_df.groupby(level=0).sum()   
                 else:
                     # Transfer q_lat from nexus to upstream flowpath
                     # qlats_df = nexuses_lateralflows_df.rename(index=self.downstream_flowpath_dict)
@@ -849,9 +876,31 @@ class HYFeaturesNetwork(AbstractNetwork):
                     # we don't need to do a nexus-to-flowpath transfer if we want nexus q_lateral to enter the
                     # network at the downstream flowpath.
                     
-                    # However, we do need to drop the 'tnx-' point and drop the 'nex-' prefixes.
-                    qlats_df = nexuses_lateralflows_df[~nexuses_lateralflows_df.index.astype(str).str.startswith('tnx-')]
-                    qlats_df.index = qlats_df.index.astype(str).str.replace(r'^[a-zA-Z-]+', '', regex=True).astype(int)
+                    # add terminal nexus values to the next upstream nexus point
+                    upstream_tnx_connections = self._tnx_upstream_connections.copy()
+                    upstream_tnx_connections['dest_id'] = upstream_tnx_connections['id'].str.replace('fp-', 'nex-')
+
+                    # Ensure the source 'tnx-' IDs actually exist in the dataframe
+                    valid_conns = upstream_tnx_connections[upstream_tnx_connections['toid'].isin(nexuses_lateralflows_df.index)]
+
+                    # Extract the 'tnx-' rows that need to be added
+                    additions = nexuses_lateralflows_df.loc[valid_conns['toid']].copy()
+
+                    # Swap the index of these extracted rows to their new destination 'nex-' IDs
+                    additions.index = valid_conns['dest_id']
+
+                    # Group by the new index and sum
+                    additions = additions.groupby(level=0).sum()
+
+                    # Add additions to the main df, creating new 'nex-' rows if they don't already exist
+                    nexuses_lateralflows_df = nexuses_lateralflows_df.add(additions, fill_value=0)
+
+                    # Drop the tnx- rows now
+                    qlats_df = nexuses_lateralflows_df[~nexuses_lateralflows_df.index.str.startswith('tnx-')].copy()
+
+                    # Drop "nex-" prefixes and convert to integer
+                    qlats_df.index = qlats_df.index.str.replace('nex-', '').astype(int)
+                    qlats_df.index.name = 'feature_id'
                 
                 qlats_df = qlats_df[qlats_df.index.isin(self.segment_index)]
                 
@@ -976,17 +1025,6 @@ class HYFeaturesNetwork(AbstractNetwork):
                     columns=qlats_df.columns )
                 all_df.loc[ qlats_df.index ] = qlats_df
                 qlats_df = all_df.sort_index()
-
-            # Handle flow at tailwaters. Flow is provided via nexus points and injected into the river network at
-            # the downstream flowpath. But, for tailwaters, there is no downstream flowpath. Here we add the q_lateral
-            # at terminal nodes back to the immediate updstream flowpath.
-            for tnx, test_up in self._upstream_terminal.items():
-                for fp in test_up:
-                    try:
-                        qlats_df.loc[fp] += nexuses_lateralflows_df.loc[tnx] #TODO: use 'mainstem' or 'order' to decide which upstream fp to use if there are multiple.
-                        break #flow added, don't add it again!
-                    except KeyError:
-                        continue
                    
         elif qlat_input_file:
             qlats_df = nhd_io.get_ql_from_csv(qlat_input_file)
@@ -1333,3 +1371,37 @@ def redistribute_forcing_values(
     new_qlats_df.index.name = 'flowline_id'
     
     return new_qlats_df
+
+def promote_connecting_flowlines(
+    flowlines_df,
+    id_col="flowline_id",
+    toid_col="flowline_toid",
+    flag_col="is_coincident",
+):
+    if flag_col not in flowlines_df.columns:
+        return flowlines_df
+ 
+    df = flowlines_df.copy()
+    df[flag_col] = df[flag_col].fillna(False).astype(bool)
+ 
+    next_id = dict(zip(df[id_col], df[toid_col]))
+    is_routed = dict(zip(df[id_col], df[flag_col]))
+ 
+    promoted = set()
+    for flowline_id, routed in is_routed.items():
+        if not routed:
+            continue
+        current = next_id.get(flowline_id)
+        while (
+            current is not None
+            and current in is_routed
+            and not is_routed[current]
+            and current not in promoted
+        ):
+            promoted.add(current)
+            current = next_id.get(current)
+ 
+    if promoted:
+        df.loc[df[id_col].isin(promoted), flag_col] = True
+ 
+    return df
