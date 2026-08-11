@@ -107,20 +107,20 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     flowline_area_ratio = pd.DataFrame()
     if "line" in flow_type:
         # Change any "non-routed" flowlines to "routed" flowlines if that have "routed" flowlines upstream of them.
-        flowpaths_df = promote_connecting_flowlines(flowpaths_df, id_col="flowline_id",toid_col="flowline_toid",flag_col="is_coincident")
+        flowpaths_df = promote_connecting_flowlines(flowpaths_df, id_col="flowline_id",toid_col="flowline_toid",flag_col="routeable")
         
         flowpaths_df['area_ratio'] = (
             flowpaths_df['incremental_areasqkm'] / 
             flowpaths_df.groupby('flowpath_toid')['incremental_areasqkm'].transform('sum')
             )
-        flowline_area_ratio = flowpaths_df[['flowline_id','flowpath_toid','area_ratio', 'is_coincident']].drop_duplicates()
+        flowline_area_ratio = flowpaths_df[['flowline_id','flowpath_toid','area_ratio', 'routeable']].drop_duplicates()
         # flowline_area_ratio['flowpath_toid'] = flowline_area_ratio['flowpath_toid'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
         flowline_area_ratio['flowline_id'] = flowline_area_ratio['flowline_id'].astype(int)
         
         # Create distribute_to column where to distribute nexus flows to. Upstream for routable
         # segments, downstream for non-routable segments.
         topology = dict(zip(flowpaths_df['flowline_id'], flowpaths_df['flowline_toid']))
-        coincident_set = set(flowline_area_ratio.loc[flowline_area_ratio['is_coincident'], 'flowline_id'])
+        coincident_set = set(flowline_area_ratio.loc[flowline_area_ratio['routeable'], 'flowline_id'])
         distribute_map = {fid: fid for fid in coincident_set}
 
         def find_distribute_target(start_fid):
@@ -156,7 +156,7 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
         flowpath_attributes_df['flowline_id'] = flowpath_attributes_df['flowline_id'].astype(float).astype(int)
         
         # Drop the non-routable segment IDs from our flowpath/flowpath_attributes dataframes
-        flowpaths_df = flowpaths_df[flowpaths_df['is_coincident']]
+        flowpaths_df = flowpaths_df[flowpaths_df['routeable']]
         flowpath_attributes_df = flowpath_attributes_df[flowpath_attributes_df[flow_type].isin(flowpaths_df[flow_type])]
     
     tnx_upstream_connections = (
@@ -1376,7 +1376,7 @@ def promote_connecting_flowlines(
     flowlines_df,
     id_col="flowline_id",
     toid_col="flowline_toid",
-    flag_col="is_coincident",
+    flag_col="routeable",
 ):
     if flag_col not in flowlines_df.columns:
         return flowlines_df
