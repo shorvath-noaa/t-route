@@ -46,7 +46,8 @@ class OutputWriter:
                  total_sim_seconds: float, start_time: datetime, dt: float,
                  rconn: Dict[int, List[int]], q0: pd.DataFrame,
                  waterbody_df: Optional[pd.DataFrame] = None,
-                 waterbody_types_df: Optional[pd.DataFrame] = None,):
+                 waterbody_types_df: Optional[pd.DataFrame] = None,
+                 duplicate_ids_df: Optional[pd.DataFrame] = None,):
         
         self._output_cfg = output_cfg
         self._dt = float(dt)
@@ -90,10 +91,10 @@ class OutputWriter:
         self._need_nex_flow = bool(self._nex_upstream_ids) and 'streamflow' in self._stream_vars
         
         # Open and pre-allocate NetCDF
-        self._nc = self._create_netcdf(output_cfg['output_path'], start_time, cfg)
+        self._nc = self._create_netcdf(output_cfg['output_path'], start_time, cfg, duplicate_ids_df)
         
         # Write initial conditions to file
-        self._write_initial_conditions(q0)
+        self._write_initial_conditions(q0, waterbody_df, rconn)
         
         LOG.info(
             "OutputWriter ready: %s  "
@@ -105,7 +106,7 @@ class OutputWriter:
     # ------------------------------------------------------------------
     # Write initial conditions
     # ------------------------------------------------------------------
-    def _write_initial_conditions(self, q0: pd.DataFrame):
+    def _write_initial_conditions(self, q0: pd.DataFrame, waterbody_df: pd.DataFrame, rconn: Dict):
         """Extracts t=0 state from q0 and writes to the first NetCDF index."""
         self._nc.variables['time'][0] = 0 # 0 minutes elapsed
         
@@ -133,6 +134,31 @@ class OutputWriter:
                 pos = [self._wb_id_to_pos[fid] for fid in valid_fps]
                 depth_buf[pos] = q0_fp['h0'].values
                 self._nc.variables['depth'][0, :] = depth_buf
+        
+        if len(self._lake_ids):
+            wbody_indices = set(waterbody_df.index)
+            if 'inflow' in self._reservoir_vars and 'qu0' in q0.columns:
+                inflow_buf = np.full(len(self._lake_ids), np.nan, dtype=np.float32)
+                for i, lid in enumerate(self._lake_ids):
+                    if lid not in rconn:
+                        continue
+                    upstream_ids = rconn[lid]
+                    upstream_lake_ids = set(upstream_ids).intersection(wbody_indices)
+                    
+                    lake_inflow = 0.0
+                    if upstream_lake_ids:
+                        lake_inflow = sum(waterbody_df.loc[list(upstream_lake_ids)].qd0)
+                        upstream_ids = [x for x in upstream_ids if x not in upstream_lake_ids]
+                    
+                    segment_inflow = 0.0
+                    if upstream_ids:
+                        segment_inflow = sum(q0.loc[upstream_ids].qu0)
+                    inflow_buf[i] = segment_inflow + lake_inflow
+                self._nc.variables['inflow'][0, :] = inflow_buf
+            if 'outflow' in self._reservoir_vars and 'qd0' in waterbody_df.columns:
+                self._nc.variables['outflow'][0, :] = waterbody_df.qd0.values.astype(np.float32)
+            if 'water_sfc_elev' in self._reservoir_vars and 'h0' in waterbody_df.columns:
+                self._nc.variables['water_sfc_elev'][0, :] = waterbody_df.h0.values.astype(np.float32)
     
     # ------------------------------------------------------------------
     # Index builders
@@ -210,7 +236,8 @@ class OutputWriter:
     # ------------------------------------------------------------------
     # NetCDF creation
     # ------------------------------------------------------------------
-    def _create_netcdf(self, output_path: str, start_time: datetime, full_config: Optional[Dict] = None) -> nc.Dataset:
+    def _create_netcdf(self, output_path: str, start_time: datetime, full_config: Optional[Dict] = None,
+                       duplicate_ids_df: Optional[Dict] = pd.DataFrame()) -> nc.Dataset:
         """
         Create and pre-allocate the output NetCDF file.
         
@@ -251,9 +278,13 @@ class OutputWriter:
             v[:] = self._nex_ids.astype(np.int32)
             
         if len(self._lake_ids):
+            # Revert augmented lake IDs (ones that were duplicates of segment IDs) back to their true value.
+            id_mapping = dict(zip(duplicate_ids_df['synthetic_ids'], duplicate_ids_df['lake_id']))
+            corrected_lake_ids = np.array([id_mapping.get(x, x) for x in self._lake_ids])
+            
             v = ds.createVariable('lake_id', 'i4', ('lake_id',))
             v.long_name = 'Reservoir (lake) integer ID'
-            v[:] = self._lake_ids.astype(np.int32)
+            v[:] = corrected_lake_ids.astype(np.int32)
             
         # data variables
         comp = dict(zlib=True, complevel=2, fill_value=np.nan)
