@@ -1109,7 +1109,8 @@ class HYFeaturesNetwork(AbstractNetwork):
 
         outputs = {
             'dataframe': self.dataframe,
-            'flowpath_dict': self._flowpath_dict,
+            'upstream_flowpath_dict': self._upstream_flowpath_dict,
+            'downstream_flowpath_dict': self._downstream_flowpath_dict,
             'terminal_codes': self._terminal_codes,
             'upstream_termincal': self._upstream_terminal,
             'connections': self._connections,
@@ -1122,10 +1123,15 @@ class HYFeaturesNetwork(AbstractNetwork):
             'usgs_lake_gage_crosswalk': self._usgs_lake_gage_crosswalk,
             'usace_lake_gage_crosswalk': self._usace_lake_gage_crosswalk,
             'rfc_lake_gage_crosswalk': self._rfc_lake_gage_crosswalk,
-            'duplicate_ids_ds': self._duplicate_ids_df,
+            'duplicate_ids_df': self._duplicate_ids_df,
             'gl_climatology_df': self._gl_climatology_df,
             'poi_nex_dict': self._poi_nex_dict,
-            'nexus_dict': self._nexus_dict
+            'nexus_dict': self._nexus_dict,
+            "flowline_area_ratio": self._flowline_area_ratio,
+            "upstream_flowpath_dict": self._upstream_flowpath_dict, 
+            "downstream_flowpath_dict": self._downstream_flowpath_dict, 
+            "compute_node_crosswalk_df": self._compute_node_crosswalk_df,
+            "tnx_upstream_connections": self._tnx_upstream_connections,
         }
         np.save(
             Path(destination_folder).joinpath(output_filename),
@@ -1142,7 +1148,8 @@ class HYFeaturesNetwork(AbstractNetwork):
                 quit()
                 
             self._dataframe = inputs.get('dataframe',None)
-            self._flowpath_dict = inputs.get('flowpath_dict',None)
+            self._upstream_flowpath_dict = inputs.get('upstream_flowpath_dict',None)
+            self._downstream_flowpath_dict = inputs.get('downstream_flowpath_dict',None)
             self._terminal_codes = inputs.get('terminal_codes',None)
             self._upstream_terminal = inputs.get('upstream_termincal',None)
             self._connections = inputs.get('connections',None)
@@ -1159,6 +1166,11 @@ class HYFeaturesNetwork(AbstractNetwork):
             self._gl_climatology_df = inputs.get('gl_climatology_df',None)
             self._poi_nex_dict = inputs.get('poi_nex_dict',None)
             self._nexus_dict = inputs.get('nexus_dict',None)
+            self._flowline_area_ratio = inputs.get("flowline_area_ratio",None)
+            self._upstream_flowpath_dict = inputs.get("upstream_flowpath_dict",None),
+            self._downstream_flowpath_dict = inputs.get("downstream_flowpath_dict",None),
+            self._compute_node_crosswalk_df = inputs.get("compute_node_crosswalk_df",None)
+            self._tnx_upstream_connections = inputs.get("tnx_upstream_connections",None)
 
 
 def read_file(file_name):
