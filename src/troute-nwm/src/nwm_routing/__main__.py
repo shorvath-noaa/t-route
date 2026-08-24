@@ -227,7 +227,7 @@ def main_v04(argv):
 
         
         route_start_time = time.time()
-
+        import pdb; pdb.set_trace()
         run_results = nwm_route(
             network.connections, 
             network.reverse_network, 

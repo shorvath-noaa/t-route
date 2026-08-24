@@ -43,7 +43,8 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
             'flowpath_attributes': r'flow[-_]?line[-_]?attributes?',
             'lakes': r'lakes?',
             'nexus': r'nexus?',
-            'network': r'network'
+            'network': r'network',
+            'hydrolocations': r'hydrolocations'
         }
     else: # Default to flowpaths
         layer_patterns = {
@@ -51,7 +52,8 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
             'flowpath_attributes': r'flow[-_]?path[-_]?attributes?',
             'lakes': r'lakes?',
             'nexus': r'nexus?',
-            'network': r'network'
+            'network': r'network',
+            'hydrolocations': r'hydrolocations'
         }
 
     # Match available layers to the patterns
@@ -61,7 +63,7 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     layers_to_read = ['flowpaths', 'flowpath_attributes']
     
     if waterbody_parameters.get('break_network_at_waterbodies', False):
-        layers_to_read.extend(['lakes', 'nexus', 'network']) #NOTE: 'network' layer for hfv3 beta testing, might need to remove later...
+        layers_to_read.extend(['lakes', 'nexus']) #NOTE: 'network' layer for hfv3 beta testing, might need to remove later...
 
     data_assimilation_parameters = compute_parameters.get('data_assimilation_parameters', {})
     da = False
@@ -71,7 +73,7 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
         data_assimilation_parameters.get('reservoir_da', {}).get('reservoir_persistence_usace', False),
         data_assimilation_parameters.get('reservoir_da', {}).get('reservoir_rfc_da', {}).get('reservoir_rfc_forecasts', False)
     ]):
-        layers_to_read.append('network')
+        layers_to_read.append('hydrolocations')
         da = True
 
     hybrid_parameters = compute_parameters.get('hybrid_parameters', {})
@@ -103,6 +105,9 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     # Handle different key column names between flowpaths and flowpath_attributes
     flowpaths_df = table_dict.get('flowpaths', pd.DataFrame())
     flowpath_attributes_df = table_dict.get('flowpath_attributes', pd.DataFrame())
+    lakes = table_dict.get('lakes', pd.DataFrame())
+    hydrolocations = table_dict.get('hydrolocations', pd.DataFrame())
+    nexus = table_dict.get('nexus', pd.DataFrame())
     
     flowline_area_ratio = pd.DataFrame()
     if "line" in flow_type:
@@ -166,7 +171,26 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     )
     # Replace any 'tnx-*' entries with 'tnx-0' to ensure terminal code masking works later.
     flowpaths_df['flowpath_toid'] = flowpaths_df['flowpath_toid'].str.replace(r'^tnx-\d+', 'tnx-0', regex=True)
-    
+
+    if not hydrolocations.empty:
+        def get_outlet_flowline_per_flowpath(df):
+            # Create a lookup mapping every flowline_id to its parent flowpath_id
+            id_to_path = df.set_index('flowline_id')['flowpath_id']
+            
+            # Look up the flowpath_id for the downstream segment (the 'toid')
+            # If the toid is an outlet or not in the dataset, this returns NaN
+            downstream_flowpath = df['flowline_toid'].map(id_to_path)
+            
+            # A flowline is the furthest downstream for its flowpath if it exits that flowpath
+            is_terminal = df['flowpath_id'] != downstream_flowpath
+            
+            # Filter and return the results
+            return df[is_terminal][['flowpath_id', 'flowline_id', 'flowline_toid']]
+
+        fp_outlet_fl_df = get_outlet_flowline_per_flowpath(flowpaths_df)
+    else:
+        fp_outlet_fl_df = pd.DataFrame()
+
     cols = supernetwork_parameters.get('columns', None)
     if cols:
         fp_col_idx = list(set(cols.values()).intersection(set(flowpaths_df.columns)))
@@ -193,25 +217,7 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
         flowpaths['key'] = flowpaths['key'].astype(float).astype(int)
         flowpaths['downstream'] = flowpaths['downstream'].astype(float).astype(int)
     
-    lakes = table_dict.get('lakes', pd.DataFrame())
-    network = table_dict.get('network', pd.DataFrame())
-    nexus = table_dict.get('nexus', pd.DataFrame())
-    
-    # if not lakes.empty:
-    #     #NOTE: Temporary (probably) solution, we get the flowpath/flowline to waterbody ID crosswalk from
-    #     # the network table (hf_v3 beta version). 
-    #     flowpaths = pd.merge(
-    #         flowpaths, 
-    #         network[[flow_type, 'lake_id']].dropna().drop_duplicates().rename(columns={'lake_id': 'waterbody'}), 
-    #         left_on='key', 
-    #         right_on=flow_type,
-    #         how='left',
-    #     ).drop(flow_type, axis=1)
-    
-    if not da:
-        network = pd.DataFrame()
-    
-    return flowpaths, lakes, network, nexus, flowline_area_ratio, tnx_upstream_connections
+    return flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df
 
 def read_json(file_path, edge_list):
     dfs = []
@@ -299,11 +305,11 @@ def read_ngen_waterbody_type_df(parm_file, lake_index_field="wb-id", lake_id_mas
 def read_geo_file(supernetwork_parameters, waterbody_parameters, compute_parameters, cpu_pool):
         
     geo_file_path = supernetwork_parameters["geo_file_path"]
-    flowpaths = lakes = network = pd.DataFrame()
+    flowpaths = lakes = hydrolocations = pd.DataFrame()
     
     file_type = Path(geo_file_path).suffix
     if(file_type=='.gpkg'):        
-        flowpaths, lakes, network, nexus, flowline_area_ratio, tnx_upstream_connections = read_geopkg(
+        flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df = read_geopkg(
             geo_file_path,
             compute_parameters,
             waterbody_parameters,
@@ -317,7 +323,7 @@ def read_geo_file(supernetwork_parameters, waterbody_parameters, compute_paramet
     else:
         raise RuntimeError("Unsupported file type: {}".format(file_type))
     
-    return flowpaths, lakes, network, nexus, flowline_area_ratio, tnx_upstream_connections
+    return flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df
 
 def load_bmi_data(value_dict, bmi_parameters,): 
     # Get the column names that we need from each table of the geopackage
@@ -409,7 +415,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             if not from_files_copy:
                 from_files=True
             if from_files:
-                flowpaths, lakes, network, nexus, flowline_area_ratio, tnx_upstream_connections = read_geo_file(
+                flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df = read_geo_file(
                     self.supernetwork_parameters,
                     self.waterbody_parameters,
                     self.compute_parameters,
@@ -417,7 +423,7 @@ class HYFeaturesNetwork(AbstractNetwork):
                 )
                 self._flowline_area_ratio = flowline_area_ratio
             else:
-                flowpaths, lakes, network = load_bmi_data(
+                flowpaths, lakes, hydrolocations = load_bmi_data(
                     value_dict, 
                     bmi_parameters,
                     )
@@ -437,7 +443,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             self.preprocess_waterbodies(lakes, nexus)
 
             # Preprocess data assimilation objects #TODO: Move to DataAssimilation.py?
-            self.preprocess_data_assimilation(network)
+            self.preprocess_data_assimilation(hydrolocations, fp_outlet_fl_df)
         
             if self.preprocessing_parameters.get('preprocess_output_folder', None):
                 self.write_preprocessed_data()
@@ -731,75 +737,80 @@ class HYFeaturesNetwork(AbstractNetwork):
 
         self._dataframe = self.dataframe.drop('waterbody', axis=1, errors='ignore').drop_duplicates()
 
-    def preprocess_data_assimilation(self, network):
-        if not network.empty:
-            gages_df = network[['id','hl_uri','hydroseq']].drop_duplicates()
-            # clear out missing values
-            gages_df = gages_df[~gages_df['hl_uri'].isnull()]
-            gages_df = gages_df[~gages_df['hydroseq'].isnull()]
-            # make 'id' an integer
-            gages_df['id'] = gages_df['id'].str.split('-',expand=True).loc[:,1].astype(float).astype(int)
-            # split the hl_uri column into type and value
-            gages_df[['type','value']] = gages_df.hl_uri.str.split('-',expand=True,n=1)
-            # filter for 'Gages' only
-            gages_df = gages_df[gages_df['type'].isin(['Gages','NID'])]
-            # Some IDs have multiple gages associated with them. This will expand the dataframe so
-            # there is a unique row per gage ID. Also adds lake ids to the dataframe for creating 
-            # lake-gage crosswalk dataframes.
-            gages_df = gages_df[['id','value','hydroseq']]
-            gages_df['value'] = gages_df.value.str.split(' ')
-            gages_df = gages_df.explode(column='value').set_index('id').join(
-                pd.DataFrame().from_dict(self.waterbody_connections,orient='index',columns=['lake_id'])
-                )
-            # transform dataframe into a dictionary where key is segment ID and value is gage ID
-            usgs_ind = gages_df.value.str.isnumeric() #usgs gages used for streamflow DA
-            # Use hydroseq information to determine furthest downstream gage when multiple are present.
-            idx_id = gages_df.index.name
-            if not idx_id:
-                idx_id = 'index'
+    def preprocess_data_assimilation(self, hydrolocations, fp_outlet_fl_df):
+        if not hydrolocations.empty:
+            gages_df = hydrolocations[hydrolocations['hl_class']=='gage'][['flowpath_id','hl_reference']].drop_duplicates()
+            # Split the strings by '|' into lists, then expand them into separate rows
+            gages_df['hl_reference'] = gages_df['hl_reference'].str.split('|')
+            exploded_gages = gages_df.explode('hl_reference')
+            # Strip any leading/trailing whitespace
+            exploded_gages['hl_reference'] = exploded_gages['hl_reference'].str.strip()
+            # Merge with outlet flowlines (per flowpath) dataframe
+            mapped_gages = pd.merge(
+                exploded_gages,
+                fp_outlet_fl_df[['flowpath_id', 'flowline_id']],
+                on='flowpath_id',
+                how='inner'
+            )
+            # Drop the old flowpath_id and reorder columns
+            gages_df = mapped_gages[['flowline_id', 'hl_reference']].reset_index(drop=True)
+            # Split hl_reference on '-'
+            gages_df[['type', 'gage_id']] = gages_df['hl_reference'].str.split('-', n=1, expand=True)
+            # Strip leading and trailing whitespace from the new columns
+            gages_df['type'] = gages_df['type'].str.strip()
+            gages_df['gage_id'] = gages_df['gage_id'].str.strip()
+            gages_df = gages_df[gages_df['type'].isin(['nwis','rfc'])].drop(columns=['hl_reference'])
+            gages_df['flowline_id'] = gages_df.flowline_id.astype(int)
+            
             self._gages = (
-                gages_df.loc[usgs_ind].reset_index()
-                .sort_values('hydroseq').drop_duplicates(['value'],keep='last')
-                .set_index(idx_id)[['value']].rename(columns={'value': 'gages'})
-                .rename_axis(None, axis=0).to_dict()
+                gages_df.rename(columns={'flowline_id': 'index', 'gage_id': 'gages'})
+                .sort_values('gages').drop_duplicates(['gages'],keep='first')
+                .set_index('index').to_dict()
             )
             
             #FIXME: temporary solution, add canadian gage crosswalk dataframe. This should come from
             # the hydrofabric.
             self._canadian_gage_link_df = pd.DataFrame(columns=['gages','link']).set_index('link')
             
+            wbody_conn_df = pd.DataFrame.from_dict(self._waterbody_connections, orient='index', columns=['lake_id'])
+            lake_gage_df = pd.merge(wbody_conn_df, gages_df.set_index('flowline_id'), left_index=True, right_index=True, how='inner')
+            
+            
             # Find furthest downstream gage and create our lake_gage_df to make crosswalk dataframes.
-            lake_gage_hydroseq_df = gages_df[~gages_df['lake_id'].isnull()][['lake_id', 'value', 'hydroseq']].rename(columns={'value': 'gages'})
-            lake_gage_hydroseq_df['lake_id'] = lake_gage_hydroseq_df['lake_id'].astype(int)
-            lake_gage_df = lake_gage_hydroseq_df[['lake_id','gages']].drop_duplicates()
-            lake_gage_hydroseq_df = lake_gage_hydroseq_df.groupby(['lake_id','gages']).max('hydroseq').reset_index().set_index('lake_id')
+            # lake_gage_hydroseq_df = gages_df[~gages_df['lake_id'].isnull()][['lake_id', 'value', 'hydroseq']].rename(columns={'value': 'gages'})
+            # lake_gage_hydroseq_df['lake_id'] = lake_gage_hydroseq_df['lake_id'].astype(int)
+            # lake_gage_df = lake_gage_hydroseq_df[['lake_id','gages']].drop_duplicates()
+            # lake_gage_hydroseq_df = lake_gage_hydroseq_df.groupby(['lake_id','gages']).max('hydroseq').reset_index().set_index('lake_id')
 
             #FIXME: temporary solution, handles USGS and USACE reservoirs. Need to update for
             # RFC reservoirs...
             #NOTE: In the event a lake ID has multiple gages, this also finds the gage furthest 
             # downstream (based on hydroseq) separately for USGS and USACE crosswalks. 
-            usgs_ind = lake_gage_df.gages.str.isnumeric()
+            # usgs_ind = lake_gage_df.gages.str.isnumeric()
             self._usgs_lake_gage_crosswalk = (
-                lake_gage_df.loc[usgs_ind].rename(columns={'lake_id': 'usgs_lake_id', 'gages': 'usgs_gage_id'}).
-                set_index('usgs_lake_id').
-                merge(lake_gage_hydroseq_df.
-                      rename_axis('usgs_lake_id').
-                      rename(columns={'gages': 'usgs_gage_id'}), on=['usgs_lake_id','usgs_gage_id']).
-                sort_values(['usgs_gage_id','hydroseq']).groupby('usgs_lake_id').
-                last().
-                drop('hydroseq', axis=1)
+                lake_gage_df[lake_gage_df['type']=='nwis'].rename(columns={'lake_id': 'usgs_lake_id', 'gage_id': 'usgs_gage_id'})
+                .set_index('usgs_lake_id')
+                .drop('type', axis=1)
+                # merge(lake_gage_hydroseq_df.
+                #       rename_axis('usgs_lake_id').
+                #       rename(columns={'gages': 'usgs_gage_id'}), on=['usgs_lake_id','usgs_gage_id']).
+                # sort_values(['usgs_gage_id','hydroseq']).groupby('usgs_lake_id').
+                # last().
+                # drop('hydroseq', axis=1)
             )
 
-            self._usace_lake_gage_crosswalk =  (
-                lake_gage_df.loc[~usgs_ind].rename(columns={'lake_id': 'usace_lake_id', 'gages': 'usace_gage_id'}).
-                set_index('usace_lake_id').
-                merge(lake_gage_hydroseq_df.
-                      rename_axis('usace_lake_id').
-                      rename(columns={'gages': 'usace_gage_id'}), on=['usace_lake_id','usace_gage_id']).
-                sort_values(['usace_gage_id','hydroseq']).groupby('usace_lake_id').
-                last().
-                drop('hydroseq', axis=1)
-            )
+            #TODO: Verify that there are no USACE reservoirs in HFv4.0...
+            self._usace_lake_gage_crosswalk = pd.DataFrame()
+            # self._usace_lake_gage_crosswalk =  (
+            #     lake_gage_df.loc[~usgs_ind].rename(columns={'lake_id': 'usace_lake_id', 'gages': 'usace_gage_id'}).
+            #     set_index('usace_lake_id').
+            #     merge(lake_gage_hydroseq_df.
+            #           rename_axis('usace_lake_id').
+            #           rename(columns={'gages': 'usace_gage_id'}), on=['usace_lake_id','usace_gage_id']).
+            #     sort_values(['usace_gage_id','hydroseq']).groupby('usace_lake_id').
+            #     last().
+            #     drop('hydroseq', axis=1)
+            # )
             
             # Set waterbody types if DA is turned on:
             usgs_da = self.data_assimilation_parameters.get('reservoir_da',{}).get('reservoir_persistence_da',{}).get('reservoir_persistence_usgs',False)
