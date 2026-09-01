@@ -172,7 +172,7 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     # Replace any 'tnx-*' entries with 'tnx-0' to ensure terminal code masking works later.
     flowpaths_df['flowpath_toid'] = flowpaths_df['flowpath_toid'].str.replace(r'^tnx-\d+', 'tnx-0', regex=True)
 
-    if not hydrolocations.empty:
+    if not hydrolocations.empty and "line" in flow_type:
         def get_outlet_flowline_per_flowpath(df):
             # Create a lookup mapping every flowline_id to its parent flowpath_id
             id_to_path = df.set_index('flowline_id')['flowpath_id']
@@ -746,24 +746,33 @@ class HYFeaturesNetwork(AbstractNetwork):
             # Strip any leading/trailing whitespace
             exploded_gages['hl_reference'] = exploded_gages['hl_reference'].str.strip()
             # Merge with outlet flowlines (per flowpath) dataframe
-            mapped_gages = pd.merge(
-                exploded_gages,
-                fp_outlet_fl_df[['flowpath_id', 'flowline_id']],
-                on='flowpath_id',
-                how='inner'
-            )
-            # Drop the old flowpath_id and reorder columns
-            gages_df = mapped_gages[['flowline_id', 'hl_reference']].reset_index(drop=True)
+            if not fp_outlet_fl_df.empty:
+                mapped_gages = pd.merge(
+                    exploded_gages,
+                    fp_outlet_fl_df[['flowpath_id', 'flowline_id']],
+                    on='flowpath_id',
+                    how='inner'
+                )
+                # Drop the old flowpath_id and reorder columns
+                gages_df = mapped_gages[['flowline_id', 'hl_reference']].reset_index(drop=True)
+            else:
+                gages_df = exploded_gages
             # Split hl_reference on '-'
             gages_df[['type', 'gage_id']] = gages_df['hl_reference'].str.split('-', n=1, expand=True)
             # Strip leading and trailing whitespace from the new columns
             gages_df['type'] = gages_df['type'].str.strip()
             gages_df['gage_id'] = gages_df['gage_id'].str.strip()
             gages_df = gages_df[gages_df['type'].isin(['nwis','rfc'])].drop(columns=['hl_reference'])
-            gages_df['flowline_id'] = gages_df.flowline_id.astype(int)
+            
+            if 'flowline_id' in gages_df.columns:
+                gages_df['flowline_id'] = gages_df.flowline_id.astype(int)
+                gages_df.rename(columns={'flowline_id': 'feature_id'}, inplace=True)
+            else:
+                gages_df['flowpath_id'] = gages_df['flowpath_id'].str.replace(r'^.*-', '', regex=True).astype(float).astype(int)
+                gages_df.rename(columns={'flowpath_id': 'feature_id'}, inplace=True)
             
             self._gages = (
-                gages_df.rename(columns={'flowline_id': 'index', 'gage_id': 'gages'})
+                gages_df.rename(columns={'feature_id': 'index', 'gage_id': 'gages'})
                 .sort_values('gages').drop_duplicates(['gages'],keep='first')
                 .set_index('index').to_dict()
             )
@@ -773,7 +782,7 @@ class HYFeaturesNetwork(AbstractNetwork):
             self._canadian_gage_link_df = pd.DataFrame(columns=['gages','link']).set_index('link')
             
             wbody_conn_df = pd.DataFrame.from_dict(self._waterbody_connections, orient='index', columns=['lake_id'])
-            lake_gage_df = pd.merge(wbody_conn_df, gages_df.set_index('flowline_id'), left_index=True, right_index=True, how='inner')
+            lake_gage_df = pd.merge(wbody_conn_df, gages_df.set_index('feature_id'), left_index=True, right_index=True, how='inner')
             
             
             # Find furthest downstream gage and create our lake_gage_df to make crosswalk dataframes.
