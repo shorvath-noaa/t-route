@@ -739,7 +739,7 @@ class HYFeaturesNetwork(AbstractNetwork):
 
     def preprocess_data_assimilation(self, hydrolocations, fp_outlet_fl_df):
         if not hydrolocations.empty:
-            gages_df = hydrolocations[hydrolocations['hl_class']=='gage'][['flowpath_id','hl_reference']].drop_duplicates()
+            gages_df = hydrolocations[hydrolocations['hl_class']=='gage'][['flowpath_id','hl_reference']].drop_duplicates().dropna(subset='flowpath_id')
             # Split the strings by '|' into lists, then expand them into separate rows
             gages_df['hl_reference'] = gages_df['hl_reference'].str.split('|')
             exploded_gages = gages_df.explode('hl_reference')
