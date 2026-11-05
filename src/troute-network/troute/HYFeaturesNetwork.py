@@ -30,6 +30,57 @@ def find_layer_name(layers, pattern):
             return layer
     return None
 
+# Columns of gage hydrolocations kept for area-scaled streamflow DA (DA-02) reporting.
+_GAGE_HYDROLOCATION_COLUMNS = (
+    'flowpath_id', 'hl_reference', 'vpuid',
+    'poi_da_ref_sqkm', 'poi_da_ngen_sqkm', 'poi_da_ratio', 'poi_da_flag',
+)
+
+def segment_attributes(flowpaths_df, flow_type):
+    """
+    Total drainage area and VPU of each routed segment, indexed by integer `key`.
+
+    A side table for area-scaled streamflow DA (DA-02): the column filter in
+    `read_geopkg` drops `total_dasqkm` and `vpuid` from the routing
+    dataframe. Keys are normalised the same way as the routing `key`
+    (`fp-123` -> 123 for flowpaths; integer `flowline_id` for flowlines).
+    Not used by routing.
+    """
+    keep = [c for c in ('total_dasqkm', 'vpuid') if c in flowpaths_df.columns]
+    if flowpaths_df.empty or flow_type not in flowpaths_df.columns or not keep:
+        return pd.DataFrame(columns=keep, index=pd.Index([], dtype='int64', name='key'))
+    df = pd.DataFrame(flowpaths_df[keep])
+    key = flowpaths_df[flow_type]
+    if "line" not in flow_type:
+        key = key.astype(str).str.replace(r'^.*-', '', regex=True)
+    df.index = pd.Index(key.astype(float).astype('int64').values, name='key')
+    if 'total_dasqkm' in df.columns:
+        df['total_dasqkm'] = df['total_dasqkm'].astype('float64')
+    if 'vpuid' in df.columns:
+        df['vpuid'] = df['vpuid'].astype('category')
+    return df[~df.index.duplicated(keep='first')].sort_index()
+
+def gage_hydrolocations(hydrolocations):
+    """
+    Gage hydrolocations, one row per `hl_reference` id, with `type` (e.g.
+    `nwis`, `rfc`) and `site` split out.
+
+    Kept for area-scaled streamflow DA (DA-02) so gages missing from the gage
+    crosswalk, and gage drainage-area agreement (`poi_da_*`), can be
+    reported. Not used by routing or nudging.
+    """
+    if hydrolocations.empty or 'hl_class' not in hydrolocations.columns:
+        return pd.DataFrame()
+    cols = [c for c in _GAGE_HYDROLOCATION_COLUMNS if c in hydrolocations.columns]
+    df = pd.DataFrame(hydrolocations.loc[hydrolocations['hl_class'] == 'gage', cols])
+    df['hl_reference'] = df['hl_reference'].astype(str).str.split('|')
+    df = df.explode('hl_reference')
+    df['hl_reference'] = df['hl_reference'].str.strip()
+    parts = df['hl_reference'].str.partition('-')
+    df['type'] = parts[0].str.strip()
+    df['site'] = parts[2].str.strip()
+    return df.reset_index(drop=True)
+
 def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwork_parameters, cpu_pool):
     # Retrieve available layers from the GeoPackage
     available_layers = fiona.listlayers(file_path)
@@ -191,6 +242,9 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
     else:
         fp_outlet_fl_df = pd.DataFrame()
 
+    # Area-scaled streamflow DA (DA-02): keep total_dasqkm/vpuid before the column filter drops them.
+    segment_attrs = segment_attributes(flowpaths_df, flow_type)
+
     cols = supernetwork_parameters.get('columns', None)
     if cols:
         fp_col_idx = list(set(cols.values()).intersection(set(flowpaths_df.columns)))
@@ -217,7 +271,7 @@ def read_geopkg(file_path, compute_parameters, waterbody_parameters, supernetwor
         flowpaths['key'] = flowpaths['key'].astype(float).astype(int)
         flowpaths['downstream'] = flowpaths['downstream'].astype(float).astype(int)
     
-    return flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df
+    return flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df, segment_attrs
 
 def read_json(file_path, edge_list):
     dfs = []
@@ -306,10 +360,11 @@ def read_geo_file(supernetwork_parameters, waterbody_parameters, compute_paramet
         
     geo_file_path = supernetwork_parameters["geo_file_path"]
     flowpaths = lakes = hydrolocations = pd.DataFrame()
+    segment_attrs = pd.DataFrame()
     
     file_type = Path(geo_file_path).suffix
     if(file_type=='.gpkg'):        
-        flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df = read_geopkg(
+        flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df, segment_attrs = read_geopkg(
             geo_file_path,
             compute_parameters,
             waterbody_parameters,
@@ -323,7 +378,7 @@ def read_geo_file(supernetwork_parameters, waterbody_parameters, compute_paramet
     else:
         raise RuntimeError("Unsupported file type: {}".format(file_type))
     
-    return flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df
+    return flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df, segment_attrs
 
 def load_bmi_data(value_dict, bmi_parameters,): 
     # Get the column names that we need from each table of the geopackage
@@ -363,7 +418,7 @@ class HYFeaturesNetwork(AbstractNetwork):
     """
     __slots__ = ["_upstream_terminal", "_nexus_latlon", "_duplicate_ids_df", "_ds", "_flowline_area_ratio",
                  "_upstream_flowpath_dict", "_downstream_flowpath_dict", "_compute_node_crosswalk_df",
-                 "_tnx_upstream_connections"]
+                 "_tnx_upstream_connections", "_segment_attributes", "_gage_hydrolocations"]
 
     def __init__(self, 
                  supernetwork_parameters, 
@@ -397,6 +452,9 @@ class HYFeaturesNetwork(AbstractNetwork):
 
         #TODO: Is this the best way to do this? And the best place to do this? -shorvath, Apr 3, 2026
         self._flowline_area_ratio = pd.DataFrame()
+        # Side tables for area-scaled streamflow DA (DA-02); not used by routing.
+        self._segment_attributes = pd.DataFrame()
+        self._gage_hydrolocations = pd.DataFrame()
         
         if self.verbose:
             print("creating supernetwork connections set")
@@ -415,13 +473,14 @@ class HYFeaturesNetwork(AbstractNetwork):
             if not from_files_copy:
                 from_files=True
             if from_files:
-                flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df = read_geo_file(
+                flowpaths, lakes, hydrolocations, nexus, flowline_area_ratio, tnx_upstream_connections, fp_outlet_fl_df, segment_attrs = read_geo_file(
                     self.supernetwork_parameters,
                     self.waterbody_parameters,
                     self.compute_parameters,
                     self.compute_parameters.get('cpu_pool', 1)
                 )
                 self._flowline_area_ratio = flowline_area_ratio
+                self._segment_attributes = segment_attrs
             else:
                 flowpaths, lakes, hydrolocations = load_bmi_data(
                     value_dict, 
@@ -497,6 +556,25 @@ class HYFeaturesNetwork(AbstractNetwork):
     @property
     def waterbody_null(self):
         return np.nan #pd.NA
+
+    @property
+    def segment_attributes(self):
+        """
+        `total_dasqkm` and `vpuid` of each routed segment (index `key`),
+        from the routed hydrofabric layer. Used by area-scaled streamflow DA;
+        not used by routing.
+        """
+        return self._segment_attributes
+
+    @property
+    def gage_hydrolocations(self):
+        """
+        Gage hydrolocations (one row per `hl_reference` id; columns include
+        `flowpath_id`, `type`, `site`, `vpuid` and `poi_da_*`). Empty
+        unless hydrolocations were read (DA enabled). Used by area-scaled
+        streamflow DA reporting; not used by routing or nudging.
+        """
+        return self._gage_hydrolocations
     
     
     def preprocess_network(self, flowpaths, nexus):
@@ -739,6 +817,7 @@ class HYFeaturesNetwork(AbstractNetwork):
 
     def preprocess_data_assimilation(self, hydrolocations, fp_outlet_fl_df):
         if not hydrolocations.empty:
+            self._gage_hydrolocations = gage_hydrolocations(hydrolocations)
             gages_df = hydrolocations[hydrolocations['hl_class']=='gage'][['flowpath_id','hl_reference']].drop_duplicates().dropna(subset='flowpath_id')
             # Split the strings by '|' into lists, then expand them into separate rows
             gages_df['hl_reference'] = gages_df['hl_reference'].str.split('|')
@@ -1157,6 +1236,8 @@ class HYFeaturesNetwork(AbstractNetwork):
             "downstream_flowpath_dict": self._downstream_flowpath_dict, 
             "compute_node_crosswalk_df": self._compute_node_crosswalk_df,
             "tnx_upstream_connections": self._tnx_upstream_connections,
+            "segment_attributes": self._segment_attributes,
+            "gage_hydrolocations": self._gage_hydrolocations,
         }
         np.save(
             Path(destination_folder).joinpath(output_filename),
@@ -1196,6 +1277,8 @@ class HYFeaturesNetwork(AbstractNetwork):
             self._downstream_flowpath_dict = inputs.get("downstream_flowpath_dict",None),
             self._compute_node_crosswalk_df = inputs.get("compute_node_crosswalk_df",None)
             self._tnx_upstream_connections = inputs.get("tnx_upstream_connections",None)
+            self._segment_attributes = inputs.get("segment_attributes", pd.DataFrame())
+            self._gage_hydrolocations = inputs.get("gage_hydrolocations", pd.DataFrame())
 
 
 def read_file(file_name):
