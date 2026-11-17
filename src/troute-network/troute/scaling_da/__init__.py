@@ -25,8 +25,9 @@ gaged basins goes beyond that study; the confluence flow split and the
 distance cap are design choices of the NGWPC implementation. A scientific
 review of these choices is planned.
 
-The increment is NOT mass conserving: it is an analysis increment added to
-discharge only (no depth/velocity), not routed water.
+The increment is NOT mass conserving: it is an analysis increment, not routed
+water. The core corrects discharge only; the run-time driver (`runtime`) also
+updates depth (h ~ Q**0.6) and leaves velocity unchanged.
 
 Modules
 -------
@@ -42,6 +43,9 @@ spread
 hyfeatures
     `build_hyfeatures_trees`: HYFeatures/HFv4.0
     network adapter (import it from `troute.scaling_da.hyfeatures`).
+runtime
+    `ScalingDARuntime`: setup and per-loop
+    spread for the `main_v04` driver (import it from `troute.scaling_da.runtime`).
 
 References
 ----------
