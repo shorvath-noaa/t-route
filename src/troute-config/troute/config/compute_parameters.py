@@ -1,7 +1,9 @@
-from pydantic import BaseModel, Field, validator
+import math
+
+from pydantic import BaseModel, Field, conint, root_validator, validator
 from datetime import datetime
 
-from typing import Optional, List, Union
+from typing import Any, Dict, Optional, List, Union
 from typing_extensions import Literal
 
 from .types import FilePath, DirectoryPath
@@ -240,6 +242,137 @@ class QLateralFiles(BaseModel):
     """
 
 
+def _finite_positive(value: float, name: str) -> float:
+    if not (math.isfinite(value) and value > 0):
+        raise ValueError(f"{name} must be a finite number > 0, got {value!r}")
+    return value
+
+
+class ThetaRegionalization(BaseModel, extra='forbid'):
+    """
+    Exponent theta of the area-scaling step of area-scaled streamflow DA,
+    dQ_s = dQ_o * (A_s / A_o)**theta. One value per gage tree, resolved most
+    specific first: `per_tree_csv` (by gage id), then `by_vpu` (by the gage's
+    hydrofabric `vpuid`), then `default`.
+
+    The default 0.77 is the flood-peak quantile scaling exponent of Ogden & Dawdy
+    (2003), J. Hydrol. Eng. 8(2):64-73, fitted in a 0.17-21.2 km2 Hortonian basin.
+    Applying it to per-timestep flow increments at larger gaged basins goes beyond
+    that study; a scientific review of this choice is planned.
+    """
+    default: float = 0.77
+    """
+    Theta for gages matched by neither `per_tree_csv` nor `by_vpu`. Finite, > 0.
+    """
+    by_vpu: Dict[str, float] = {}
+    """
+    Theta per VPU, keyed by the hydrofabric's `vpuid` exactly as written there
+    (zero-padded strings: "01", "03N", ...). Keys matching no gage in the domain are
+    logged; if none match, the run stops (a likely key-format error).
+    """
+    per_tree_csv: Optional[FilePath] = None
+    """
+    CSV of per-gage theta: two columns, gage id and theta, optional header (e.g.
+    `gage_id,theta`). Ids are matched as strings exactly as they appear in the
+    TimeSlice files (keep leading zeros). Wins over `by_vpu`. Ids matching no gage
+    in the domain are logged; if none match, the run stops.
+    """
+
+    @validator("default")
+    def _check_default(cls, v: float) -> float:
+        return _finite_positive(v, "streamflow_scaling_parameters.theta.default")
+
+    @validator("by_vpu")
+    def _check_by_vpu(cls, v: Dict[str, float]) -> Dict[str, float]:
+        for key in v:
+            if not str(key).strip():
+                raise ValueError("streamflow_scaling_parameters.theta.by_vpu has an empty key")
+            _finite_positive(v[key], f"streamflow_scaling_parameters.theta.by_vpu[{key!r}]")
+        return v
+
+
+# NGWPC t-route options for this method that this version does not implement. A key
+# set to its NGWPC default is accepted (it changes nothing); any other value is an error.
+_SCALING_DEFERRED_OPTIONS: Dict[str, Any] = dict(
+    innovation_spread_h=0.0, travel_time_lag=False, lag_window_h=48.0,
+    synthetic_obs_factor=None, synthetic_obs_baseline=None,
+)
+
+_SCALING_MAX_REACH_KM = 200.0
+_SCALING_SPLIT_FLOOR_CMS = 1.0e-6
+
+
+class StreamflowScalingParams(BaseModel, extra='forbid'):
+    """
+    Parameters of area-scaled ("simple scaling") streamflow DA. See
+    `StreamflowDA.streamflow_scaling`.
+    """
+    theta: ThetaRegionalization = Field(default_factory=ThetaRegionalization)
+    """
+    Area-scaling exponent, one value per gage tree.
+    """
+    max_reach_km: float = _SCALING_MAX_REACH_KM
+    """
+    How far upstream of a gage, measured along the river network (km), its
+    correction is spread. Finite, > 0. The cap and its 200 km default are a design
+    choice of the NGWPC implementation, not part of Ogden & Dawdy (2003); review
+    planned.
+    """
+    min_flow_cms: float = _SCALING_SPLIT_FLOOR_CMS
+    """
+    Floor (m3/s) on the confluence flow-split denominator: where the flow at a
+    confluence is at or below it, the branches get no correction that timestep.
+    Finite, > 0.
+    """
+    holdout_sites_file: Optional[FilePath] = None
+    """
+    Text file of gage ids (one per line) to withhold for evaluation: they are
+    neither nudged nor used as tree roots, so the gage downstream corrects their
+    basin. Ids are compared as strings (keep leading zeros). Ids matching no gage
+    in the domain stop the run, so a typo cannot silently withhold nothing.
+    """
+    site_types: List[str] = Field(default_factory=lambda: ["nwis"])
+    """
+    Gage hydrolocation types (`hl_reference` prefixes) whose observations are
+    spread upstream. Default: USGS (`nwis`) only.
+    """
+    extra_stop_segs: List[int] = Field(default_factory=list)
+    """
+    Additional segment ids at which every gage tree stops (e.g. segments corrected
+    by another method).
+    """
+    spread_chunk_timesteps: Optional[conint(ge=0)] = None
+    """
+    Timesteps processed at a time by the upstream spread (bounds its temporary
+    memory; results do not depend on it). Unset: 24. 0: the whole loop at once.
+    """
+
+    @validator("max_reach_km", "min_flow_cms")
+    def _check_positive(cls, v: float, field) -> float:
+        return _finite_positive(v, f"streamflow_scaling_parameters.{field.name}")
+
+    @validator("site_types")
+    def _check_site_types(cls, v: List[str]) -> List[str]:
+        if not v or any(not str(s).strip() for s in v):
+            raise ValueError("streamflow_scaling_parameters.site_types must be a non-empty list of names")
+        return v
+
+    @root_validator(pre=True)
+    def _reject_deferred_options(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        values = dict(values)
+        for key, default in _SCALING_DEFERRED_OPTIONS.items():
+            if key not in values:
+                continue
+            value = values.pop(key)
+            if value != default:
+                raise ValueError(
+                    f"streamflow_scaling_parameters.{key} is not supported in this version of "
+                    f"t-route (only its default, {default!r}, is accepted); remove it from the "
+                    "configuration"
+                )
+        return values
+
+
 class StreamflowDA(BaseModel):
     """
     Parameters controlling streamflow nudging DA
@@ -275,6 +408,43 @@ class StreamflowDA(BaseModel):
     If True, enable streamflow data assimilation in diffusive module. 
     NOTE: Not yet implemented, leave as False. (June 25, 2024)
     """
+    streamflow_scaling: bool = False
+    """
+    If True, add area-scaled ("simple scaling") streamflow DA on top of streamflow
+    nudging (requires `streamflow_nudging: True`; HYFeatures networks and the -V4
+    driver only). After each routing loop, the correction nudging applied at each
+    observed gage is spread over the gage's upstream tree: scaled by drainage area
+    along channels, split by modeled flow at confluences, stopping at the next
+    observed gage, at waterbodies and at `max_reach_km`. Discharge is corrected,
+    and depth with it (wide-channel Manning, h ~ Q**0.6); velocity is not.
+
+    The area scaling follows Ogden & Dawdy (2003), J. Hydrol. Eng. 8(2):64-73,
+    which scales flood peaks; applying it to per-timestep increments goes beyond
+    that paper. The confluence flow split and the distance cap are design choices
+    of the NGWPC implementation. A scientific review of the method is planned.
+
+    The correction is an analysis increment, not routed water, so it does not
+    conserve mass; the injected volume is logged per loop. Upstream segments receive
+    the gage's correction at the same instant (no travel-time lag). The corrected
+    flow is written to output every loop but enters the routing state only at the
+    end of the final loop (the hand-off to a following forecast); these semantics
+    are provisional and will be re-evaluated.
+    """
+    streamflow_scaling_parameters: StreamflowScalingParams = Field(default_factory=StreamflowScalingParams)
+    """
+    Options for `streamflow_scaling`; the defaults are complete, so the block is
+    only needed to override them.
+    """
+
+    @root_validator(skip_on_failure=True)
+    def _scaling_requires_nudging(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        if values.get("streamflow_scaling") and not values.get("streamflow_nudging"):
+            raise ValueError(
+                "streamflow_da.streamflow_scaling extends streamflow nudging (the gage "
+                "correction it spreads upstream is the nudging correction); set "
+                "streamflow_da.streamflow_nudging: True as well"
+            )
+        return values
 
 
 class ReservoirPersistenceDA(BaseModel):
@@ -413,6 +583,16 @@ class DataAssimilationParameters(BaseModel, extra='ignore'):
     _coerce_none_to_default = validator(
         "timeslice_lookback_hours", "qc_threshold", pre=True, allow_reuse=True
     )(coerce_none_to_default)
+
+    @root_validator(skip_on_failure=True)
+    def _scaling_needs_observations(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        streamflow_da = values.get("streamflow_da")
+        if streamflow_da is not None and streamflow_da.streamflow_scaling and not values.get("usgs_timeslices_folder"):
+            raise ValueError(
+                "streamflow_da.streamflow_scaling is True but usgs_timeslices_folder is not set, "
+                "so there are no observations to assimilate"
+            )
+        return values
 
 
 class ForcingParameters(BaseModel):
