@@ -1,7 +1,9 @@
 """Area-scaled ("simple scaling") streamflow data assimilation: core algorithm.
 
-Topology-agnostic, pure NumPy. Nothing here reads files, configs or t-route
-network objects; callers hand in plain mappings and arrays.
+The core is topology-agnostic, pure NumPy: it reads no files, configs or
+t-route network objects; callers hand in plain mappings and arrays. The
+HYFeatures adapter (`hyfeatures`) extracts those mappings from a built
+network and is not imported here.
 
 The method spreads a gage's analysis increment dQ_o(t) over
 the gage's upstream tree:
@@ -37,6 +39,9 @@ theta
 spread
     `pack_trees`, `spread_increments`, `apply_increments`,
     `apply_upstream_correction`.
+hyfeatures
+    `build_hyfeatures_trees`: HYFeatures/HFv4.0
+    network adapter (import it from `troute.scaling_da.hyfeatures`).
 
 References
 ----------
