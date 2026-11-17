@@ -169,6 +169,9 @@ class HYFeaturesMappings:
         poi_da_ngen_sqkm, poi_da_ratio, poi_da_flag, model_to_ref, flagged`.
         `status` is `"mapped"` or a drop reason. `flagged` marks
         drainage-area disagreement; it is reported, never used to exclude.
+        HFv4.0 `poi_da_ratio` is a relative *difference* (0 = agreement;
+        consistent with `|ngen - ref| / max(ref, 1 km2)`), not a ratio;
+        `model_to_ref` is the ratio `area_model_sqkm / poi_da_ref_sqkm`.
     excluded_types : dict[str, int]
         Gage sites of other types (e.g. `rfc`), counted, not assimilated.
     n_area_inversions_network : int
@@ -234,6 +237,11 @@ def _diffusive_segments(network: Any) -> FrozenSet[int]:
     return frozenset(segs)
 
 
+def _exceeds(x: pd.Series, tol: float) -> pd.Series:
+    x = pd.to_numeric(x, errors="coerce").astype("float64")
+    return (x > tol).fillna(False).astype(bool)
+
+
 def _outside(x: pd.Series, tol: float) -> pd.Series:
     x = pd.to_numeric(x, errors="coerce").astype("float64")
     lim = math.log1p(tol)
@@ -275,7 +283,8 @@ def hyfeatures_mappings(
     extra_stop_segs : Iterable[int], optional
         Additional stop segments (e.g. gages assimilated by another method).
     poi_ratio_tolerance : float, optional
-        Relative tolerance for `flagged` in the gage report.
+        Tolerance for `flagged` in the gage report: `poi_da_ratio` (a relative
+        difference) above it, or `model_to_ref` outside `[1/(1+tol), 1+tol]`.
 
     Raises
     ------
@@ -369,7 +378,7 @@ def hyfeatures_mappings(
         )
     report["flagged"] = (
         (report["poi_da_flag"].fillna(0) != 0)
-        | _outside(report["poi_da_ratio"], poi_ratio_tolerance)
+        | _exceeds(report["poi_da_ratio"], poi_ratio_tolerance)
         | _outside(report["model_to_ref"], poi_ratio_tolerance)
     )
     site_vpu = {
@@ -414,7 +423,8 @@ def _log_mappings(m: HYFeaturesMappings, types: Sequence[str]) -> None:
     if n_flag:
         LOG.warning(
             "scaling DA: %d gage(s) disagree with the hydrofabric drainage area "
-            "(poi_da_flag, or poi_da_ratio/model-to-reference ratio outside the tolerance); "
+            "(poi_da_flag, poi_da_ratio relative difference, or model/reference area ratio "
+            "outside the tolerance); "
             "reported only, still assimilated: %s",
             n_flag, m.gage_report.loc[m.gage_report["flagged"], "site"].tolist()[:10],
         )

@@ -73,10 +73,10 @@ def make_network(mode="flowpath", *, hl_extra=(), gages_extra=None, compute_node
         seg_attrs = seg_attrs.drop(columns="total_dasqkm")
     dataframe = pd.DataFrame({"dx": [1000.0 * (1 + (s % 3)) for s in segs]}, index=pd.Index(segs, name="key"))
     rows = [
-        ("fp-10", "nwis-A", 1.0, 0, 37.0),
+        ("fp-10", "nwis-A", 0.0, 0, 37.0),
         ("fp-14", "nwis-B", 3.0, 1, 13.0),
-        ("fp-16", "nwis-L", 1.0, 0, 20.0),
-        ("fp-99", "nwis-X", 1.0, 0, 5.0),
+        ("fp-16", "nwis-L", 0.0, 0, 20.0),
+        ("fp-99", "nwis-X", 0.0, 0, 5.0),
         ("fp-12", "rfc-R", None, None, None),
         ("fp-31", "nwis-D", None, None, None),
         ("fp-30", "nwis-E", None, None, None),
@@ -136,8 +136,22 @@ def test_gage_report_flags_and_status():
     assert r.loc["A", "status"] == "mapped"
     assert r.loc["A", "model_to_ref"] == pytest.approx(r.loc["A", "area_model_sqkm"] / 37.0)
     assert not r.loc["A", "flagged"]
-    assert r.loc["B", "flagged"]  # poi_da_flag and ratio 3.0
+    assert r.loc["B", "flagged"]  # poi_da_flag and relative difference 3.0
     assert not r.loc["D", "flagged"]  # no poi data -> not flagged
+
+
+def test_poi_da_ratio_is_a_relative_difference():
+    # HFv4.0 poi_da_ratio: 0 = agreement. Each rule flags on its own.
+    net = make_network()
+    hl = net.gage_hydrolocations
+    a = hl["site"] == "A"
+    hl.loc[a, "poi_da_ratio"] = 0.2  # within 0.25
+    assert not hyfeatures_mappings(net).gage_report.set_index("site").loc["A", "flagged"]
+    hl.loc[a, "poi_da_ratio"] = 0.3  # relative difference too large
+    assert hyfeatures_mappings(net).gage_report.set_index("site").loc["A", "flagged"]
+    hl.loc[a, "poi_da_ratio"] = 0.0
+    hl.loc[a, "poi_da_ref_sqkm"] = 37.0 / 1.3  # model/reference = 1.3
+    assert hyfeatures_mappings(net).gage_report.set_index("site").loc["A", "flagged"]
 
 
 def test_flagged_gages_are_kept(caplog):
