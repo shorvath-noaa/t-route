@@ -43,6 +43,13 @@ def random_network(rng: np.random.Generator, n: int) -> Tuple[Dict[int, int], Di
     return edges, total_area(edges, incr)
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "hfv4_fixture: needs an HFv4.0 subset gpkg at $TROUTE_HFV4_FIXTURE (generated, not committed)",
+    )
+
+
 @pytest.fixture
 def rng() -> np.random.Generator:
     return np.random.default_rng(20261102)
